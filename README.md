@@ -169,7 +169,7 @@ deepconsol/
 ### Install / deploy (host-native)
 
 ```bash
-git clone https://github.com/s-ttp/DeepConsole.git deepconsol
+git clone https://github.com/s-ttp/DeepConsol.git deepconsol
 cd deepconsol
 cp .env.example .env          # fill in real secrets (see Configuration)
 ./ops/install.sh
@@ -637,7 +637,7 @@ sudo certbot --nginx -d your.domain
 > This is an MVP. Recommended hardening before production: enable login
 > rate-limiting, add SSH host-key verification and/or an allow-list for terminal
 > targets, and front the app with a real TLS certificate. Track these in the
-> [issues](https://github.com/s-ttp/DeepConsole/issues) tab.
+> [issues](https://github.com/s-ttp/DeepConsol/issues) tab.
 
 ---
 
