@@ -1,0 +1,28 @@
+{
+  "name": "deepconsol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DeepConsol — Secure web SSH terminal + Gemini AI copilot for telecom engineers",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @deepconsol/shared",
+    "build:api": "npm run build -w @deepconsol/api",
+    "build:worker": "npm run build -w @deepconsol/worker",
+    "build:web": "npm run build -w @deepconsol/web",
+    "build": "npm run build:shared && npm run build:api && npm run build:worker && npm run build:web",
+    "migrate": "npm run migrate -w @deepconsol/api",
+    "seed": "npm run seed -w @deepconsol/api",
+    "dev:api": "npm run dev -w @deepconsol/api",
+    "dev:worker": "npm run dev -w @deepconsol/worker",
+    "dev:web": "npm run dev -w @deepconsol/web",
+    "start:api": "npm run start -w @deepconsol/api",
+    "start:worker": "npm run start -w @deepconsol/worker",
+    "start:web": "npm run start -w @deepconsol/web"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

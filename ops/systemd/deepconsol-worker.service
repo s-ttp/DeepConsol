@@ -1,0 +1,25 @@
+[Unit]
+Description=DeepConsol ingestion worker (parses + chunks + embeds documents)
+After=network.target postgresql.service redis-server.service deepconsol-api.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=sttp
+Group=sttp
+WorkingDirectory=/home/sttp/deepconsol/apps/worker
+EnvironmentFile=/home/sttp/deepconsol/.env
+ExecStart=/usr/local/bin/node /home/sttp/deepconsol/apps/worker/dist/worker.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/deepconsol /var/log/deepconsol
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

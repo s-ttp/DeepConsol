@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("@xterm/xterm/css/xterm.css");
+
+:root {
+  color-scheme: dark;
+  --ink-50: #f8fafc;
+  --ink-100: #f1f5f9;
+  --ink-200: #e2e8f0;
+  --ink-300: #cbd5e1;
+  --ink-400: #94a3b8;
+  --ink-500: #64748b;
+  --ink-600: #475569;
+  --ink-700: #334155;
+  --ink-800: #1e293b;
+  --ink-900: #0f172a;
+  --ink-950: #020617;
+  
+  --kb-color: #00FFA3;
+  --gen-color: #6366F1;
+  --web-color: #06b6d4;
+
+  --app-bg: var(--ink-950);
+  --app-text: var(--ink-200);
+}
+
+.light {
+  color-scheme: light;
+  /* Invert the ink palette for light mode */
+  --ink-50: #020617;
+  --ink-100: #0f172a;
+  --ink-200: #1e293b;
+  --ink-300: #334155;
+  --ink-400: #475569;
+  --ink-500: #64748b;
+  --ink-600: #94a3b8;
+  --ink-700: #cbd5e1;
+  --ink-800: #e2e8f0;
+  --ink-900: #f1f5f9;
+  --ink-950: #f8fafc;
+  
+  --kb-color: #00CC82;
+  --gen-color: #4F46E5;
+
+  --app-bg: var(--ink-950);
+  --app-text: var(--ink-200);
+}
+
+html, body {
+  height: 100%;
+  background-color: var(--app-bg);
+  color: var(--app-text);
+}
+
+/* xterm container needs a deterministic background to avoid theme bleed */
+.xterm-container {
+  background: #000000;
+}
+
+.message-segment.gen {
+  border-left: 2px solid var(--gen-color);
+}
+.message-segment.kb {
+  border-left: 2px solid var(--kb-color);
+}
+.message-segment.web {
+  border-left: 2px solid var(--web-color);
+}
+
+/* The "no native copy" guard for command/config blocks. */
+.safe-copy-block {
+  user-select: none;
+  -webkit-user-select: none;
+  position: relative;
+}
+.safe-copy-block code {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Universal keyboard focus ring — visible against any glass surface.
+   Tailwind's `focus:` strips the native outline; this restores accessibility
+   without the click-state visual noise of `focus:`. */
+:focus-visible {
+  outline: 2px solid rgba(138, 43, 226, 0.7);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Respect operator preference for reduced motion. The mesh background
+   pulses indefinitely, which can cause vestibular discomfort and burn battery
+   during long shifts. Freeze all animations when the user has opted out. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Print fidelity — engineers screenshot/print chat for incident reports.
+   Glass effects look terrible (or invisible) on paper. */
+@media print {
+  *, *::before, *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  body > div[class*="z-[-1]"] { display: none !important; }
+  body, html {
+    background: white !important;
+    color: black !important;
+  }
+}

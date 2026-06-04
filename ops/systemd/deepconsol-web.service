@@ -1,0 +1,26 @@
+[Unit]
+Description=DeepConsol Next.js web frontend
+After=network.target deepconsol-api.service
+
+[Service]
+Type=simple
+User=sttp
+Group=sttp
+WorkingDirectory=/home/sttp/deepconsol/apps/web
+EnvironmentFile=/home/sttp/deepconsol/.env
+Environment=NODE_ENV=production
+Environment=PORT=3002
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/local/bin/node /home/sttp/deepconsol/node_modules/next/dist/bin/next start -p 3002 -H 127.0.0.1
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

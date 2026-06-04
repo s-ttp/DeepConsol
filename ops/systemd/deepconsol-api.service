@@ -1,0 +1,29 @@
+[Unit]
+Description=DeepConsol API + Terminal Gateway (Node/Fastify)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=sttp
+Group=sttp
+WorkingDirectory=/home/sttp/deepconsol/apps/api
+EnvironmentFile=/home/sttp/deepconsol/.env
+ExecStart=/usr/local/bin/node /home/sttp/deepconsol/apps/api/dist/server.js
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/deepconsol /var/log/deepconsol
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
