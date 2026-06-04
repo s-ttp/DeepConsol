@@ -166,18 +166,58 @@ deepconsol/
   Gemini key for embeddings. AI features degrade gracefully with a clear
   "not configured" message until a key is set.
 
-### Install / deploy (host-native)
+### One-command install (fresh host)
+
+On a clean Debian/Ubuntu VM, `ops/bootstrap.sh` does the whole first-time setup:
 
 ```bash
 git clone https://github.com/s-ttp/DeepConsol.git deepconsol
 cd deepconsol
-cp .env.example .env          # fill in real secrets (see Configuration)
+./ops/bootstrap.sh
+```
+
+It will:
+
+1. Install prerequisites (Node 20, PostgreSQL + pgvector, Redis, Nginx) if missing.
+2. Generate `.env` with **strong random secrets** (JWT secret, vault KEK, DB
+   password, seed admin password) — only if `.env` doesn't already exist.
+3. Create the Postgres role + database + `vector`/`pg_trgm` extensions.
+4. Create runtime dirs and a self-signed TLS cert.
+5. Build, migrate, seed, install the systemd units + Nginx site, and start
+   everything.
+
+It's **idempotent** — safe to re-run. Override the public host or skip package
+install with `APP_PUBLIC_HOST=1.2.3.4 ./ops/bootstrap.sh` or
+`SKIP_PKG=1 ./ops/bootstrap.sh`. The generated seed-admin password is printed at
+the end and stored in `.env`.
+
+### Rebuild / redeploy (already set up)
+
+When prerequisites and `.env` already exist (e.g. after `git pull`), use the
+lighter installer:
+
+```bash
+cp .env.example .env          # first time only — then fill in real secrets
 ./ops/install.sh
 ```
 
 `install.sh` runs `npm ci` → builds all four workspaces → runs DB migrations and
-seed → installs the Nginx site and three systemd units → enables and starts
-everything.
+seed → renders & installs the Nginx site and three systemd units (portable to any
+checkout path / user) → enables and starts everything.
+
+### Publishing to GitHub
+
+`ops/publish.sh` pushes the repo using a token supplied via the environment — the
+token is injected into the push URL only for the command and is **never written
+to `.git/config` or committed**:
+
+```bash
+GITHUB_TOKEN=ghp_xxx ./ops/publish.sh
+# or target a specific remote/branch:
+GITHUB_TOKEN=ghp_xxx ./ops/publish.sh https://github.com/<owner>/<repo>.git main
+```
+
+> Treat the PAT as disposable — revoke it once you're done.
 
 ### Local development
 

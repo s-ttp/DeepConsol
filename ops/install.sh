@@ -40,9 +40,18 @@ if [ ! -e /usr/local/bin/node ]; then
 fi
 sudo install -m 644 ops/nginx/deepconsol.conf /etc/nginx/sites-available/deepconsol.conf
 sudo ln -sfn /etc/nginx/sites-available/deepconsol.conf /etc/nginx/sites-enabled/deepconsol.conf
-sudo install -m 644 ops/systemd/deepconsol-api.service    /etc/systemd/system/deepconsol-api.service
-sudo install -m 644 ops/systemd/deepconsol-worker.service /etc/systemd/system/deepconsol-worker.service
-sudo install -m 644 ops/systemd/deepconsol-web.service    /etc/systemd/system/deepconsol-web.service
+
+# Render the systemd units for THIS checkout: substitute the hardcoded
+# /home/sttp/deepconsol path and sttp user/group with the actual ROOT and the
+# invoking user, so the installer is portable to any path / account.
+SVC_USER="$(id -un)"
+SVC_GROUP="$(id -gn)"
+for unit in deepconsol-api deepconsol-worker deepconsol-web; do
+  sed -e "s#/home/sttp/deepconsol#${ROOT}#g" \
+      -e "s#^User=sttp#User=${SVC_USER}#" \
+      -e "s#^Group=sttp#Group=${SVC_GROUP}#" \
+      "ops/systemd/${unit}.service" | sudo tee "/etc/systemd/system/${unit}.service" >/dev/null
+done
 
 echo "==> [5/5] Reloading systemd + nginx and starting services"
 sudo nginx -t
