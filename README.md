@@ -166,6 +166,17 @@ deepconsol/
   Gemini key for embeddings. AI features degrade gracefully with a clear
   "not configured" message until a key is set.
 
+### Install scripts at a glance
+
+All operational scripts live in [`ops/`](ops/):
+
+| Script | Use it when | What it does |
+|---|---|---|
+| **`ops/bootstrap.sh`** | First time, on a fresh host | Installs prerequisites, generates `.env` with random secrets, sets up the DB + cert + dirs, then runs `install.sh`. **Start here.** |
+| **`ops/install.sh`** | Redeploy after a `git pull` | `npm ci` → build all workspaces → migrate + seed → install/start systemd units + Nginx. Assumes prerequisites + `.env` exist. |
+| **`ops/publish.sh`** | Pushing to GitHub | Pushes with a PAT from `GITHUB_TOKEN` (never persisted). |
+| `npm run dev:*` | Local development | Watch-mode API / worker / web (no systemd). |
+
 ### One-command install (fresh host)
 
 On a clean Debian/Ubuntu VM, `ops/bootstrap.sh` does the whole first-time setup:
@@ -186,10 +197,32 @@ It will:
 5. Build, migrate, seed, install the systemd units + Nginx site, and start
    everything.
 
-It's **idempotent** — safe to re-run. Override the public host or skip package
-install with `APP_PUBLIC_HOST=1.2.3.4 ./ops/bootstrap.sh` or
-`SKIP_PKG=1 ./ops/bootstrap.sh`. The generated seed-admin password is printed at
-the end and stored in `.env`.
+It's **idempotent** — safe to re-run; it won't overwrite an existing `.env` or
+regenerate the TLS cert.
+
+**Options** (export before running, or prefix the command):
+
+| Variable | Effect | Example |
+|---|---|---|
+| `APP_PUBLIC_HOST` | Set the public IP/host (otherwise auto-detected) | `APP_PUBLIC_HOST=203.0.113.10 ./ops/bootstrap.sh` |
+| `SKIP_PKG` | Skip apt package installation (deps already present) | `SKIP_PKG=1 ./ops/bootstrap.sh` |
+
+**After it finishes** the script prints the URL and the generated seed-admin
+password (also saved in `.env`). Then:
+
+1. Browse to `https://<your-host>/` and accept the self-signed cert.
+2. Log in as `admin@deepconsol.local` with the seed password — you'll be forced
+   to rotate it on first login.
+3. Enable AI: add a provider key in **Admin → LLM Config** (and an embedding key
+   in **Admin → Embeddings**). Until then, AI features show a clear
+   "not configured" message instead of erroring.
+
+Check status / logs any time:
+
+```bash
+sudo systemctl status deepconsol-api deepconsol-worker deepconsol-web
+sudo journalctl -u deepconsol-api -f
+```
 
 ### Rebuild / redeploy (already set up)
 
