@@ -6,7 +6,7 @@
  * within a chunk), preserves technical signals.
  *
  * Defense in depth: client sanitizes BEFORE content enters chat; server
- * re-sanitizes BEFORE retrieval, prompt construction, Gemini call, web
+ * re-sanitizes BEFORE retrieval, prompt construction, the LLM call, web
  * grounding, and history storage. The two passes are intentional — the
  * server must NEVER trust the client.
  *

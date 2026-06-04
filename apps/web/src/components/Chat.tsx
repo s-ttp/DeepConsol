@@ -40,8 +40,8 @@ const MODE_LABELS: Record<ChatMode, string> = {
 const MODE_TITLES: Record<ChatMode, string> = {
   auto: "Auto — try KB first, fall back to model knowledge",
   kb_only: "KB only — answer strictly from your uploaded documents",
-  model_only: "Model only — Gemini general knowledge, no RAG",
-  web_grounded: "Web grounded — Gemini + Google Search",
+  model_only: "Model only — general model knowledge, no RAG",
+  web_grounded: "Web grounded — model answer + Google Search (Gemini provider)",
 };
 
 const Chat = forwardRef<ChatHandle, Props>(function Chat({ threadId, onCreateThread }, ref) {
