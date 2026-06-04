@@ -2,7 +2,7 @@
   "name": "deepconsol",
   "version": "0.1.0",
   "private": true,
-  "description": "DeepConsol — Secure web SSH terminal + multi-provider AI copilot (Gemini/OpenAI/Anthropic) for telecom engineers",
+  "description": "DeepConsol — Smart SSH/Telnet terminal with embedded AI Co-pilot for Network Engineers",
   "license": "MIT",
   "workspaces": [
     "packages/*",

@@ -1,6 +1,6 @@
 # DeepConsol
 
-**Secure web SSH/Telnet terminal + AI copilot for telecom network engineers.**
+**Smart SSH/Telnet terminal with embedded AI Co-pilot for Network Engineers.**
 
 DeepConsol gives engineers a single screen with three coordinated panes — a
 server-gated **terminal**, a **context drawer** for staging evidence, and an **AI
