@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "DeepConsol — Secure web SSH terminal + Gemini AI copilot for telecom engineers",
+  "license": "MIT",
   "workspaces": [
     "packages/*",
     "apps/*"

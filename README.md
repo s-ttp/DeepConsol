@@ -657,5 +657,4 @@ sudo certbot --nginx -d your.domain
 
 ## License
 
-No license file is included yet. Until one is added, all rights are reserved by
-the repository owner — open an issue to discuss usage.
+Released under the [MIT License](LICENSE). © 2026 s-ttp.
