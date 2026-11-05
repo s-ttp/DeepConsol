@@ -173,7 +173,7 @@ All operational scripts live in [`ops/`](ops/):
 | Script | Use it when | What it does |
 |---|---|---|
 | **`ops/bootstrap.sh`** | First time, on a fresh host | Installs prerequisites, generates `.env` with random secrets, sets up the DB + cert + dirs, then runs `install.sh`. **Start here.** |
-| **`ops/install.sh`** | Redeploy after a `git pull` | `npm ci` → build all workspaces → migrate + seed → install/start systemd units + Nginx. Assumes prerequisites + `.env` exist. |
+| **`ops/install.sh`** | Redeploy after a `git pull` | `npm ci` → build all workspaces → migrate + seed → install/start systemd units + Nginx → health-check every service. Assumes prerequisites + `.env` exist. |
 | **`ops/publish.sh`** | Pushing to GitHub | Pushes with a PAT from `GITHUB_TOKEN` (never persisted). |
 | `npm run dev:*` | Local development | Watch-mode API / worker / web (no systemd). |
 
@@ -189,13 +189,23 @@ cd deepconsol
 
 It will:
 
+0. Run **pre-flight checks** before touching the host: ports 443/5001/5002/3002
+   (and 6379 if it will install Redis) must be free or already DeepConsol's/nginx's,
+   Node ≥ 20 (it warns before replacing the system Node), and a warning if the
+   auto-detected host is a private IP.
 1. Install prerequisites (Node 20, PostgreSQL + pgvector, Redis, Nginx) if missing.
-2. Generate `.env` with **strong random secrets** (JWT secret, vault KEK, DB
-   password, seed admin password) — only if `.env` doesn't already exist.
-3. Create the Postgres role + database + `vector`/`pg_trgm` extensions.
+   pgvector is pulled from the PostgreSQL apt repo (apt.postgresql.org) when the
+   distro doesn't ship it (e.g. Debian 12).
+2. Configure a local Redis bound to loopback **with a generated password** (unless
+   you pass `REDIS_URL`), then generate `.env` with **strong random secrets**
+   (JWT secret, vault KEK, DB password, Redis password, seed admin password) —
+   only if `.env` doesn't already exist.
+3. Create the Postgres role + database + `vector`/`pg_trgm` extensions. Any SQL
+   error aborts the script.
 4. Create runtime dirs and a self-signed TLS cert.
-5. Build, migrate, seed, install the systemd units + Nginx site, and start
-   everything.
+5. Build, migrate, seed, install the systemd units + Nginx site, start
+   everything, and **health-check** each service (direct and through Nginx) —
+   exiting non-zero with recent logs if anything isn't up.
 
 It's **idempotent** — safe to re-run; it won't overwrite an existing `.env` or
 regenerate the TLS cert.
@@ -205,10 +215,13 @@ regenerate the TLS cert.
 | Variable | Effect | Example |
 |---|---|---|
 | `APP_PUBLIC_HOST` | Set the public IP/host (otherwise auto-detected) | `APP_PUBLIC_HOST=203.0.113.10 ./ops/bootstrap.sh` |
+| `REDIS_URL` | Use an existing Redis instead of installing one (required if 6379 is already taken) | `REDIS_URL=redis://:pw@127.0.0.1:6379/2 ./ops/bootstrap.sh` |
 | `SKIP_PKG` | Skip apt package installation (deps already present) | `SKIP_PKG=1 ./ops/bootstrap.sh` |
+| `SKIP_NODE` | Never replace the system Node.js (abort if it's < 20) | `SKIP_NODE=1 ./ops/bootstrap.sh` |
+| `CHECK_ONLY` | Run the pre-flight checks only; change nothing | `CHECK_ONLY=1 ./ops/bootstrap.sh` |
 
-**After it finishes** the script prints the URL and the generated seed-admin
-password (also saved in `.env`). Then:
+**After it finishes** the script prints the URL. The generated seed-admin
+password is **not** printed — it's `SEED_ADMIN_PASSWORD` in `.env`. Then:
 
 1. Browse to `https://<your-host>/` and accept the self-signed cert.
 2. Log in as `admin@deepconsol.local` with the seed password — you'll be forced
@@ -236,7 +249,8 @@ cp .env.example .env          # first time only — then fill in real secrets
 
 `install.sh` runs `npm ci` → builds all four workspaces → runs DB migrations and
 seed → renders & installs the Nginx site and three systemd units (portable to any
-checkout path / user) → enables and starts everything.
+checkout path / user) → enables and starts everything → health-checks the API,
+terminal gateway, web UI and Nginx routes (exits non-zero with recent logs on failure).
 
 ### Publishing to GitHub
 
