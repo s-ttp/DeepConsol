@@ -1,0 +1,40 @@
+name: ✨ Feature request
+description: Suggest a new capability, vendor support, playbook or improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+      placeholder: When troubleshooting VoLTE on Nokia IMS I have to…
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should it work? Mock-ups, example commands or output (with fake values) help.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: security
+    attributes:
+      label: Does this change what data can reach the AI or the network?
+      description: e.g. new automatic paths from terminal to chat, new connection types, new data stored.
+      options:
+        - "No"
+        - "Yes — described above"
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd be willing to open a pull request for this.
