@@ -112,9 +112,14 @@ const PSEUDO_RULES: PseudoRule[] = [
   { name: "msisdn", description: "Subscriber MSISDN", prefix: "MSISDN", pattern: /\b(?:msisdn[:\s=]+)?(\+?\d{10,15})\b/gi },
   { name: "subscriber-id", description: "5G/4G subscriber IDs (SUPI/SUCI/GUTI/TMSI)", prefix: "SUBID", pattern: /\b(?:supi|suci|5g-guti|guti|p-tmsi|m-tmsi|tmsi)[:\s=]+([0-9a-fA-F-]{4,})\b/gi },
   { name: "network-id", description: "Network identifiers (PLMN/TAC/LAC/RAC/eNB/gNB/APN)", prefix: "NETID", pattern: /\b(?:plmn|tac|lac|rac|enodeb|gnodeb|enb|gnb|apn)[:\s=]+([0-9a-zA-Z._-]{2,})\b/gi },
+  // MAC must run before ipv6: a colon-separated MAC looks like IPv6 groups.
+  // Formats: 00:1a:2b:3c:4d:5e, 00-1a-2b-3c-4d-5e, Cisco 001a.2b3c.4d5e.
+  { name: "mac", description: "MAC addresses (colon, hyphen, Cisco dotted)", prefix: "MAC", pattern: /\b([0-9a-fA-F]{2}([:-])(?:[0-9a-fA-F]{2}\2){4}[0-9a-fA-F]{2}|(?:[0-9a-fA-F]{4}\.){2}[0-9a-fA-F]{4})\b/g },
   { name: "ipv4", description: "Public IPv4 addresses", prefix: "IP", pattern: /\b((?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)){3})(?:\/\d{1,2})?\b/g },
-  { name: "ipv6", description: "IPv6 addresses", prefix: "IP6", pattern: /\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b/g },
-  { name: "mac", description: "MAC addresses", prefix: "MAC", pattern: /\b([0-9a-fA-F]{2}([:-])(?:[0-9a-fA-F]{2}\2){4}[0-9a-fA-F]{2})\b/g },
+  // Candidate match (full or "::"-compressed); isValidIpv6() then rejects
+  // non-addresses such as times (09:39:37). Lookarounds instead of \b because
+  // an address may start or end with "::".
+  { name: "ipv6", description: "Public IPv6 addresses (full or :: compressed)", prefix: "IP6", pattern: /(?<![0-9A-Za-z:.])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?![0-9A-Za-z:])/g },
   { name: "cellid", description: "Cell identifiers (cell-id/cgi/eci/nci)", prefix: "CELL", pattern: /\b(?:cell[-_ ]?id|cgi|eci|nci)[:\s=]+([0-9a-fA-F]{4,16})\b/gi },
 ];
 
@@ -146,6 +151,31 @@ export const BUILTIN_RULES: BuiltinRuleMeta[] = [
 function isPrivateOrLoopbackIp(ip: string): boolean {
   return PRIVATE_RANGES.some((r) => r.test(ip));
 }
+
+/** Strict-enough IPv6 syntax check: 1–4 hex digits per group, at most one "::". */
+function isValidIpv6(v: string): boolean {
+  if (!/[0-9a-f]/i.test(v) || v.includes(":::")) return false;
+  const halves = v.split("::");
+  if (halves.length > 2) return false;
+  let groups = 0;
+  for (const half of halves) {
+    if (half === "") continue;
+    for (const g of half.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/i.test(g)) return false;
+      groups += 1;
+    }
+  }
+  return halves.length === 2 ? groups <= 7 : groups === 8;
+}
+
+/** Loopback (::1), unspecified (::), link-local (fe80::/10), unique-local (fc00::/7). */
+function isPrivateOrLoopbackIpv6(v: string): boolean {
+  const l = v.toLowerCase();
+  return l === "::1" || l === "::" || /^fe[89ab][0-9a-f]?:/.test(l) || /^f[cd][0-9a-f]{0,2}:/.test(l);
+}
+
+/** Rules whose values are case-insensitive hex: alias by lower-cased value. */
+const CASE_INSENSITIVE_VALUES = new Set(["ipv6", "mac"]);
 
 function pseudonymForCounter(prefix: string, counter: number): string {
   return `${prefix}_${String(counter).padStart(3, "0")}`;
@@ -223,20 +253,27 @@ export function sanitize(
     for (const rule of PSEUDO_RULES) {
       if (disabled.has(rule.name)) continue;
       const counters: Record<string, number> = {};
-      work = work.replace(rule.pattern, (match, captured) => {
-        const value = (captured ?? match).toString();
+      work = work.replace(rule.pattern, (match: string, captured: unknown) => {
+        // Every pattern wraps the value in capture group 1. Guard anyway: if a
+        // pattern had no group, the 2nd callback arg would be the numeric match
+        // offset, and replacing that digit inside the match garbles the text.
+        const value = typeof captured === "string" ? captured : match;
         if (rule.name === "ipv4" && isPrivateOrLoopbackIp(value)) {
+          return match;
+        }
+        if (rule.name === "ipv6" && (!isValidIpv6(value) || isPrivateOrLoopbackIpv6(value))) {
           return match;
         }
         if (rule.name === "msisdn" && value.replace(/^\+/, "").length < 10) {
           return match;
         }
-        if (pseudonymMap[`${rule.name}:${value}`]) {
-          return match.replace(value, pseudonymMap[`${rule.name}:${value}`]);
+        const key = `${rule.name}:${CASE_INSENSITIVE_VALUES.has(rule.name) ? value.toLowerCase() : value}`;
+        if (pseudonymMap[key]) {
+          return match.replace(value, pseudonymMap[key]);
         }
         counters[rule.name] = (counters[rule.name] ?? 0) + 1;
         const alias = pseudonymForCounter(rule.prefix, counters[rule.name]);
-        pseudonymMap[`${rule.name}:${value}`] = alias;
+        pseudonymMap[key] = alias;
         pseudonymizations += 1;
         return match.replace(value, alias);
       });
