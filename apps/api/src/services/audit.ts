@@ -16,6 +16,7 @@ export type AuditEventType =
   | "ssh_credential.deleted"
   | "terminal.session_started"
   | "terminal.session_ended"
+  | "terminal.target_blocked"
   | "knowledge.document_uploaded"
   | "knowledge.document_indexed"
   | "knowledge.document_visibility_changed"

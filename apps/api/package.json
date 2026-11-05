@@ -24,7 +24,8 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "migrate": "node dist/db/migrate.js",
-    "seed": "node dist/db/seed.js"
+    "seed": "node dist/db/seed.js",
+    "test": "tsc -p tsconfig.json && node --test test/"
   },
   "dependencies": {
     "@deepconsol/shared": "*",

@@ -236,6 +236,10 @@ downloads and the web build.
 4. **Admin → Embeddings:** add a Gemini key so documents are vector-indexed.
 5. **Admin → Groups / Users:** create engineer accounts and assign teams.
 6. **Admin → Documents:** upload your MOPs and vendor guides.
+7. **Restrict terminal targets:** set `TERMINAL_ALLOWED_CIDRS` in `.env` to your
+   device management networks, then
+   `sudo systemctl restart deepconsol-api` (see
+   [Terminal target policy](#terminal-target-policy)).
 
 ### Script options
 
@@ -432,8 +436,8 @@ npm run dev:web               # Next.js dev server (watch)
 
 Build one workspace with `npm run build:shared | build:api | build:worker | build:web`.
 
-Run the sanitizer test suite (one case per built-in rule, plus alias, overlay
-and IPv6/MAC regression tests) with:
+Run the test suites (sanitizer: one case per built-in rule plus alias, overlay
+and IPv6/MAC regressions; API: terminal target policy) with:
 
 ```bash
 npm test
@@ -464,6 +468,7 @@ After editing `.env`, restart the services (see [Operations](#operations)).
 | `STORAGE_FS_ROOT` | Where uploaded documents are stored (filesystem). `STORAGE_DRIVER` is reserved; only `fs` exists today. |
 | `UPLOAD_MAX_BYTES` · `INGEST_CHUNK_TARGET_TOKENS` (512) · `INGEST_CHUNK_OVERLAP_TOKENS` (64) | Upload + chunking |
 | `TERMINAL_IDLE_TIMEOUT_SEC` (1800) · `TERMINAL_MAX_SESSIONS_PER_USER` (8) | Terminal limits (idle time counts keystrokes, not output) |
+| `TERMINAL_ALLOWED_CIDRS` · `TERMINAL_DENIED_CIDRS` | Terminal target policy: comma-separated CIDRs or IPs (see [Terminal target policy](#terminal-target-policy)). An invalid entry stops the API from starting. |
 | `CHAT_HISTORY_RETENTION_DAYS` · `CHAT_MAX_CONCURRENT_PER_USER` · `TERMINAL_DEFAULT_SCROLLBACK` | **Reserved; not enforced yet** |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated allowed browser origins |
 | `LOG_LEVEL` | Pino log level |
@@ -633,7 +638,8 @@ DeepConsol's security controls at a glance. Each one is explained in more detail
 | | User passwords hashed with bcrypt (cost 12) | Fixed |
 | **Sessions** | JWT in an HttpOnly, Secure, SameSite=Lax cookie; 12 h lifetime | `JWT_TTL_HOURS` |
 | | Password change required on first login and on admin request | Admin (Users) |
-| **Terminal** | Per-user session cap, idle timeout, orphaned-session cleanup | `TERMINAL_MAX_SESSIONS_PER_USER`, `TERMINAL_IDLE_TIMEOUT_SEC` |
+| **Terminal** | **Target policy:** the server itself, loopback and cloud metadata are always blocked; optional allow-list / deny-list | `TERMINAL_ALLOWED_CIDRS`, `TERMINAL_DENIED_CIDRS` |
+| | Per-user session cap, idle timeout, orphaned-session cleanup | `TERMINAL_MAX_SESSIONS_PER_USER`, `TERMINAL_IDLE_TIMEOUT_SEC` |
 | **Network** | App ports on loopback only; Nginx TLS with HSTS, `X-Frame-Options: DENY`, `nosniff`, strict referrer and permissions policy | `ops/nginx/deepconsol.conf` |
 | | Local Redis bound to loopback with a password (bootstrap) | `REDIS_URL` |
 | **Host** | systemd hardening: `NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome=read-only`, `PrivateTmp`, restricted write paths | `ops/systemd/*.service` |
@@ -853,9 +859,10 @@ until you explicitly insert it and send.
   (an in-house IAC-aware client with chunk-safe parsing and NAWS window resize),
   bridged to **xterm.js** with fit / search / web-links / unicode11 / webgl
   addons. Connect ad-hoc or from a saved vault credential; multiple tabs.
-- **Limits** — per-user session cap (`TERMINAL_MAX_SESSIONS_PER_USER`), idle
-  timeout, configurable scrollback. Orphaned session rows are swept on API
-  startup so the cap can't be exhausted by crashes.
+- **Limits** — per-user session cap (`TERMINAL_MAX_SESSIONS_PER_USER`) and idle
+  timeout. Orphaned session rows are swept on API startup so the cap can't be
+  exhausted by crashes.
+- **Target policy** — see below.
 - **Right-click menu** on a selection: **Send to Chat (sanitized preview)** ·
   **Pin to Drawer** · **Copy Sanitized**. (Normal text selection copy in the
   terminal still copies raw output for your own use.)
@@ -865,6 +872,53 @@ until you explicitly insert it and send.
   through a risk-classified confirmation; high and critical blocks require
   typing `I UNDERSTAND`. See
   [Command risk classification](#command-risk-classification) for the full rules.
+
+---
+
+### Terminal target policy
+
+The terminal gateway runs inside your network, so DeepConsol controls **which
+addresses a session may connect to**. Without this, a user could point a
+"Telnet session" at the server's own Redis or database, or at the cloud metadata
+service, instead of at a network device.
+
+**Always blocked** (not configurable):
+
+| Range | Why |
+|---|---|
+| `127.0.0.0/8`, `::1` | Loopback: services on this server |
+| **Every IP address of this server** (all interfaces, including Docker bridges) | Services bound to `0.0.0.0` are reachable via the server's LAN IP |
+| `169.254.0.0/16`, `fe80::/10`, `100.100.100.200`, `fd00:ec2::254` | Link-local, including the cloud metadata endpoints (credentials) |
+| `0.0.0.0/8`, `::`, `224.0.0.0/4`, `ff00::/8`, `240.0.0.0/4`, `255.255.255.255` | Unspecified, multicast, reserved, broadcast |
+
+IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is treated as IPv4, so it can't be used to
+get around these.
+
+**Configurable in `.env`** (restart the services after a change):
+
+| Setting | Effect | Example |
+|---|---|---|
+| `TERMINAL_ALLOWED_CIDRS` | If set, **only** these ranges can be reached. **Recommended for production:** list your device management networks. | `10.50.0.0/16,192.168.100.0/24,2001:db8:100::/48` |
+| `TERMINAL_DENIED_CIDRS` | Extra ranges to block on top of the built-in list, e.g. Docker networks or other servers in the same subnet | `172.17.0.0/16,172.18.0.0/16` |
+
+With neither set, any address not in the built-in list is allowed, including
+private ranges like `10.0.0.0/8`, since that's usually where network devices
+are.
+
+**How it's enforced:**
+
+- **Hostnames:** resolved once, and **every** returned address must pass. A
+  name that resolves to a public address *and* to `169.254.169.254` is
+  refused.
+- **Checked at three points:**
+  - when a credential is saved;
+  - when a session is created (the connect dialog shows the reason);
+  - again in the gateway right before connecting, which also covers
+    credentials saved before a policy change.
+- **Checked IP is used:** the gateway connects to the IP it checked, not the
+  hostname, so DNS can't change the destination in between.
+- **Audit:** every block is logged as `terminal.target_blocked`, with the
+  target, the resolved IP and the reason.
 
 ---
 
@@ -968,6 +1022,7 @@ no decrypted secrets; content as hashes where relevant):
 `auth.login` · `auth.login_failed` · `auth.logout` · `auth.password_rotated` ·
 `user.created` · `user.updated` · `group.*` · `ssh_credential.created` ·
 `ssh_credential.deleted` · `terminal.session_started` · `terminal.session_ended` ·
+`terminal.target_blocked` ·
 `knowledge.document_uploaded` · `knowledge.document_indexed` ·
 `knowledge.document_visibility_changed` · `knowledge.document_deleted` ·
 `rag.query` · `chat.message_sent` · `chat.message_received` ·
@@ -1025,7 +1080,7 @@ sudo certbot --nginx -d your.domain
   HttpOnly / Secure / SameSite cookies.
 
 > This is an MVP. Before production, read [Known limitations](#known-limitations).
-> In particular, restrict which hosts the terminal gateway can reach, and use a
+> In particular, set `TERMINAL_ALLOWED_CIDRS` to your device networks, and use a
 > real TLS certificate. Track hardening work in the
 > [issues](https://github.com/s-ttp/DeepConsol/issues) tab.
 
@@ -1045,11 +1100,11 @@ sudo certbot --nginx -d your.domain
 
 Security hardening still to do (MVP):
 
-- **Terminal targets aren't restricted.** Users can open sessions to any host
-  and port the server can reach. Deploy the server in a network segment that can
-  reach only the devices engineers should manage, and keep other services on the
-  host (Redis, databases, cloud metadata) unreachable or password-protected. An
-  admin-managed allow-list is planned.
+- **Terminal targets are open by default within the built-in limits.** Until
+  you set `TERMINAL_ALLOWED_CIDRS`, users can reach any address that isn't
+  blocked, including other servers on the same LAN and Docker networks. Set an
+  allow-list for production (see [Terminal target policy](#terminal-target-policy)).
+  The policy is configured in `.env`, not yet in the admin UI.
 - **No SSH host-key verification yet**, so a man-in-the-middle on the management
   network isn't detected.
 - **Sessions can't be revoked early.** Logout clears the browser cookie, but a
