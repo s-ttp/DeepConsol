@@ -2,7 +2,7 @@
   "name": "deepconsol",
   "version": "0.1.0",
   "private": true,
-  "description": "DeepConsol — Smart SSH/Telnet terminal with embedded AI Co-pilot for Network Engineers",
+  "description": "DeepConsol \u2014 Smart SSH/Telnet terminal with embedded AI Co-pilot for Network Engineers",
   "license": "MIT",
   "workspaces": [
     "packages/*",
@@ -21,7 +21,8 @@
     "dev:web": "npm run dev -w @deepconsol/web",
     "start:api": "npm run start -w @deepconsol/api",
     "start:worker": "npm run start -w @deepconsol/worker",
-    "start:web": "npm run start -w @deepconsol/web"
+    "start:web": "npm run start -w @deepconsol/web",
+    "test": "npm test -w @deepconsol/shared"
   },
   "engines": {
     "node": ">=20.0.0"

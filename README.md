@@ -432,6 +432,13 @@ npm run dev:web               # Next.js dev server (watch)
 
 Build one workspace with `npm run build:shared | build:api | build:worker | build:web`.
 
+Run the sanitizer test suite (one case per built-in rule, plus alias, overlay
+and IPv6/MAC regression tests) with:
+
+```bash
+npm test
+```
+
 ---
 
 ## Configuration (`.env`)
@@ -700,13 +707,14 @@ The examples below are actual sanitizer output.
 | `network-id` | PLMN / TAC / LAC / RAC / eNB / gNB / APN (when labelled) | `PLMN: 42001 TAC: 0x1A2B APN=internet.operator` → `PLMN: NETID_001 TAC: NETID_002 APN=NETID_003` |
 | `cellid` | Cell IDs: `cell-id` / CGI / ECI / NCI (when labelled) | `cell-id: 1A2B3C` → `cell-id: CELL_001` |
 | `ipv4` | **Public** IPv4 addresses (private ranges kept, see below) | `peer 203.0.113.7 via 10.20.0.1` → `peer IP_001 via 10.20.0.1` |
-| `ipv6` | IPv6 addresses (not reliably masked today, see [Known limitations](#known-limitations)) | |
-| `mac` | MAC addresses in `aa-bb-cc-dd-ee-ff` form | `00-1a-2b-3c-4d-5e` → `MAC_001` |
+| `ipv6` | **Public** IPv6 addresses, full or `::`-compressed (loopback, link-local `fe80::/10` and unique-local `fc00::/7` kept) | `neighbor 2001:db8:85a3::8a2e:370:7334` → `neighbor IP6_001` |
+| `mac` | MAC addresses: `00:1a:2b:3c:4d:5e`, `00-1a-2b-3c-4d-5e`, Cisco `001a.2b3c.4d5e` | `001a.2b3c.4d5e    DYNAMIC  Gi1/0/3` → `MAC_001    DYNAMIC  Gi1/0/3` |
 | `hostname` | FQDNs ending in `.com .net .org .io .co .local .internal .corp .lan .private .gov .edu .info .telco .telecom` | `core-sw01.dc1.operator.com` → `HOST_001` |
 
 **How aliases behave:**
 
-- **Consistent within a message.** The same value gets the same alias, and
+- **Consistent within a message.** The same value gets the same alias (IPv6 and
+  MAC addresses regardless of upper/lower case), and
   different values get different numbers:
   `IMSI 420011234567890 … IMSI 420011234567890 … 420019999999999` →
   `IMSI_001 … IMSI_001 … IMSI_002`.
@@ -715,9 +723,10 @@ The examples below are actual sanitizer output.
   correlate across messages, send the related output together.
 - **Not reversible.** Nothing stores the alias-to-value mapping, so neither
   the AI provider nor DeepConsol can map an alias back to the real value.
-- **Private addresses are kept on purpose.** `10/8`, `172.16/12`,
-  `192.168/16`, `127/8`, `169.254/16`, `0/8` and `255/8` stay readable, so the
-  AI can follow your internal topology. If your internal addressing is
+- **Private addresses are kept on purpose.** IPv4 `10/8`, `172.16/12`,
+  `192.168/16`, `127/8`, `169.254/16`, `0/8`, `255/8` and IPv6 `::1`,
+  `fe80::/10`, `fc00::/7` stay readable, so the AI can follow your internal
+  topology. If your internal addressing is
   sensitive, add custom rules for those prefixes (see below).
 - **Order matters.** Custom redactions run first, then built-in redactions, then
   built-in aliases, then custom aliases. A value already replaced by an earlier
@@ -1052,10 +1061,7 @@ Security hardening still to do (MVP):
 - **Sanitizer coverage gaps.** These are not yet masked: Cisco `password 0`,
   `secret 8/9`, TACACS/RADIUS/ISAKMP keys, SNMPv3 `auth`/`priv` passphrases, and
   Juniper `$9$` secrets (see the custom-rule examples in
-  [Tuning the filters](#tuning-the-filters-admin--filters)). **IPv6 addresses
-  are not reliably masked**, and colon-separated MAC addresses (`00:1a:2b:…`)
-  come out partly visible and garbled. Both are caused by a bug in the IPv6 rule.
-  Dotted Cisco MACs (`001a.2b3c.4d5e`) aren't matched. Long plain numbers
+  [Tuning the filters](#tuning-the-filters-admin--filters)). Long plain numbers
   (interface counters, timestamps) can be over-masked as `MSISDN_nnn` /
   `IMSI_nnn`.
 - **Bastion / jump-host fields** on saved credentials are stored but not yet used
