@@ -2,29 +2,34 @@
 
 **Smart SSH/Telnet terminal with embedded AI Co-pilot for Network Engineers.**
 
-DeepConsol gives engineers a single screen with three coordinated panes — a
-server-gated **terminal**, a **context drawer** for staging evidence, and an **AI
-chat** grounded in your own knowledge base — designed so they get real AI help
-**without leaking secrets or customer data to a third-party model.**
+DeepConsol gives network engineers one browser screen with three linked panes:
+a **terminal** (SSH/Telnet to routers, switches, core and RAN nodes), a **context
+drawer** for collecting evidence, and an **AI chat** that answers from your own
+knowledge base (MOPs, vendor guides, RCA archives). It's designed so engineers get
+real AI help **without leaking secrets or customer data to a third-party model.**
 
-It is deliberately *not* auto-integrated. Terminal output never reaches the AI
-unless a human explicitly sends it through a sanitization preview. Sanitization
-runs twice (client then server). Retrieval is group-isolated in SQL. SSH
-credentials are encrypted with a key that never touches the database. AI command
-suggestions can't be copied to the OS clipboard until they pass a risk-classified
-review. Every sensitive action is audited.
+Nothing moves between the terminal and the AI automatically. Terminal output
+reaches the AI only when an engineer explicitly sends it through a sanitization
+preview. Sanitization runs twice, first in the browser and again on the server.
+Knowledge-base retrieval is isolated per team in SQL. SSH credentials are
+encrypted with a key that never touches the database. AI-suggested commands
+can't be copied to the clipboard until they pass a risk-classified review.
+Sensitive actions are audited.
 
-Runs **host-native** (systemd, no Docker) on a single Linux VM behind Nginx.
+Runs **host-native** (systemd, no Docker) on a single Linux VM behind Nginx, and
+installs with **one command** ([Quick start](#quick-start)).
 
 ---
 
 ## Table of contents
 
+- [Why DeepConsol](#why-deepconsol)
 - [Highlights](#highlights)
+- [Quick start](#quick-start)
+- [Installation guide (startup script)](#installation-guide-startup-script)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
-- [Getting started](#getting-started)
 - [Configuration](#configuration-env)
 - [First login](#first-login)
 - [The workspace](#the-workspace)
@@ -44,68 +49,315 @@ Runs **host-native** (systemd, no Docker) on a single Linux VM behind Nginx.
 
 ---
 
+## Why DeepConsol
+
+Network engineers already use AI assistants, usually by pasting CLI output into a
+public chatbot. That output is full of things that must not leave the operator's
+network: device passwords and keys, SNMP communities, subscriber identifiers
+(IMSI, MSISDN, IMEI), customer IPs and hostnames. The answers are also generic,
+because the chatbot doesn't know your vendors, your network or your procedures.
+
+DeepConsol puts the AI next to the terminal, and inside your controls.
+
+### Benefits
+
+| | Benefit | How |
+|---|---|---|
+| ⚡ | **Faster troubleshooting** | AI help in the same screen as the CLI. Select output, send it to chat, and get a structured answer (symptoms → hypotheses → commands → next steps → escalation). |
+| 📚 | **Answers from *your* knowledge** | Upload MOPs, vendor guides and RCA archives. Answers cite the exact document section, and fall back to general knowledge only when they say so. |
+| 🔒 | **Data stays protected** | Secrets are stripped, and subscriber and network identifiers are replaced with aliases (`IMSI_001`, `IP_001`), before anything reaches a model. Documents are sanitized before they are indexed. |
+| 🧑‍✈️ | **Human always in control** | No auto-execution and no automatic terminal-to-AI path. Copying an AI-suggested command needs a confirmation step, and you must type `I UNDERSTAND` for risky ones (`commit`, `reload`, `write erase`…). |
+| 👥 | **Team-scoped knowledge** | Documents can be global, per-group (Core, RAN, Transport, NOC…) or private. The scope is enforced in the database. |
+| 🔁 | **No AI vendor lock-in** | Switch the chat provider between Gemini, OpenAI and Anthropic, or change the model, from the admin console. No restart is needed. |
+| 🧭 | **Consistent diagnostics** | Built-in playbooks (LTE attach, VoLTE drop, 5G registration, packet loss, cell down, handover) give every engineer the same starting point. |
+| 📝 | **Accountability** | Logins, terminal sessions, credential changes, document changes, AI queries and command copies are audit-logged, with redacted metadata only. |
+| 🛠️ | **Simple to run** | One VM, no Docker or Kubernetes. A single script installs everything, checks for conflicts first, and health-checks the result. |
+
+### Who it's for
+
+- **NOC and operations engineers** handling alarms and first-line diagnostics.
+- **Core / RAN / transport / IMS specialists** working on Cisco, Juniper, Nokia,
+  Ericsson, Huawei, Mavenir and similar equipment.
+- **Telecom operators and managed-service providers** that want AI assistance
+  but can't send network data to a public chatbot.
+- **Vendor support teams** who need a shared, cited knowledge base.
+
+---
+
 ## Highlights
 
-- **Web terminal gateway** — interactive SSH (`ssh2` + PTY) and Telnet (in-house
-  IAC-aware client) bridged to xterm.js over a WebSocket; per-user session caps,
-  idle timeout, NAWS window resize, and startup sweep of orphaned sessions.
-- **Human-gated AI** — terminal text reaches the model only through an explicit
-  *Send to chat → sanitization preview*. No raw selection, paste, or drag path.
-- **Two-pass security filtering** — strips secrets and pseudonymizes telecom/PII
-  identifiers on the **client before chat** and again on the **server**; 35
-  built-in rules, individually toggleable, plus admin-defined custom rules.
-- **Group-isolated RAG** — hybrid (vector + full-text + trigram) retrieval over
-  `pgvector`, with `global`/`group`/`private` visibility enforced in SQL so
-  unauthorized chunks are never read, embedded into a prompt, or cited.
-- **Context drawer** — pin sanitized terminal output and free-form notes, then
+- **Web terminal gateway.** Interactive SSH (`ssh2` + PTY) and Telnet (an
+  in-house client that handles Telnet protocol negotiation) bridged to xterm.js
+  over a WebSocket. Includes per-user session caps, an idle timeout, window
+  resize, and a startup sweep of orphaned sessions.
+- **Human-gated AI.** Terminal text reaches the model only through an explicit
+  *Send to chat → sanitization preview*. There's no raw selection, paste or drag
+  path.
+- **Two-pass security filtering.** Strips secrets and pseudonymizes telecom/PII
+  identifiers on the **client before chat** and again on the **server**. 35
+  built-in rules, each individually toggleable, plus admin-defined custom rules.
+- **Group-isolated RAG.** Hybrid (vector + full-text + trigram) retrieval over
+  `pgvector`, with `global`/`group`/`private` visibility enforced in SQL.
+  Unauthorized chunks are never read, embedded into a prompt, or cited.
+- **Context drawer.** Pin sanitized terminal output and free-form notes, then
   fold a chosen subset into your next chat message.
-- **Pluggable AI providers** — chat works with **Gemini, OpenAI, or Anthropic**,
-  switchable live from the admin UI; embeddings stay on Gemini (fixed vector
-  dimension) and are independently configurable.
-- **Built-in troubleshooting playbooks** — structured RAN/core/transport
-  diagnostic templates (LTE attach, VoLTE drop, 5G registration, packet loss,
-  cell down, handover failure).
-- **Encrypted SSH credential vault** — AES-256-GCM, KEK held only in the env;
-  per-row IV + auth tag.
-- **Risk-gated copy** — AI command output auto-classified
-  (low/medium/high/critical); high & critical require typing `I UNDERSTAND`.
-- **Full audit trail** — auth, users/groups, credentials, terminal sessions,
-  document lifecycle, RAG queries, chat, and safe-copy — redacted metadata only.
+- **Pluggable AI providers.** Chat works with **Gemini, OpenAI or Anthropic**,
+  switchable live from the admin UI. Embeddings stay on Gemini (fixed vector
+  dimension) and are configured separately.
+- **Built-in troubleshooting playbooks.** Structured RAN/core/transport
+  diagnostic templates.
+- **Encrypted SSH credential vault.** AES-256-GCM with the key held only in the
+  environment, and a separate IV and authentication tag for every row.
+- **Risk-gated copy.** AI command output is classified automatically
+  (low/medium/high/critical); high and critical require typing `I UNDERSTAND`.
+- **Full audit trail.** Auth, users/groups, credentials, terminal sessions,
+  document lifecycle, RAG queries, chat and safe-copy, with redacted metadata
+  only.
+- **One-command install.** `ops/bootstrap.sh` checks for conflicts, installs
+  everything, generates secrets, and health-checks the result.
+
+---
+
+## Quick start
+
+On a fresh **Debian 12 / Ubuntu** VM, as a user with `sudo`:
+
+```bash
+git clone https://github.com/s-ttp/DeepConsol.git deepconsol
+cd deepconsol
+
+CHECK_ONLY=1 ./ops/bootstrap.sh                 # optional: dry-run the pre-flight checks
+APP_PUBLIC_HOST=<public-ip-or-dns> ./ops/bootstrap.sh
+```
+
+Then open `https://<public-ip-or-dns>/` and accept the self-signed certificate.
+Log in as `admin@deepconsol.local`; the password is `SEED_ADMIN_PASSWORD` in
+`deepconsol/.env`. Add an AI provider key under **Admin → LLM Config**.
+
+The full walkthrough, options, common scenarios and troubleshooting are in the
+next section.
+
+---
+
+## Installation guide (startup script)
+
+### 1. Requirements
+
+| | Requirement |
+|---|---|
+| **OS** | Debian 12 (tested) or Ubuntu 22.04 / 24.04, with `apt` and `systemd` |
+| **Size** | 2 vCPU / **4 GB RAM** (the web build is the peak), about **2 GB disk** for the app and dependencies, plus space for uploaded documents |
+| **Access** | A normal user with `sudo`. The services run as this user, from wherever you clone the repo. |
+| **Network in** | TCP **443** open to your users (open it in the cloud security group or firewall, too) |
+| **Network out** | HTTPS to the Debian/Ubuntu mirrors, `deb.nodesource.com`, `apt.postgresql.org`, the npm registry, and your AI provider (`HTTPS_PROXY` is supported, see [Configuration](#configuration-env)) |
+| **Free local ports** | 443 (or nginx already using it), 3002, 5001, 5002, and 6379 if the script installs Redis |
+| **AI keys** *(optional)* | A key for Gemini, OpenAI or Anthropic for chat, and a Gemini key for embeddings. Everything else works without them; AI panels show "not configured". |
+
+The script installs whatever is missing: **Node.js 20**, **PostgreSQL 15 +
+pgvector + pg_trgm**, **Redis**, **Nginx** and **openssl**.
+
+### 2. Get the code
+
+```bash
+git clone https://github.com/s-ttp/DeepConsol.git deepconsol
+cd deepconsol
+```
+
+### 3. Dry run (recommended)
+
+```bash
+CHECK_ONLY=1 ./ops/bootstrap.sh
+```
+
+This runs only the **pre-flight checks** and changes nothing:
+
+- **Ports:** 443/5001/5002/3002 must be free, or already used by nginx or
+  DeepConsol itself. Port 6379 is also checked when Redis will be installed.
+- **Node.js:** must be ≥ 20. If it's older, the script **warns that it will
+  replace the system-wide Node**.
+- **Host address:** warns if the auto-detected host is a **private IP** (common
+  on cloud VMs).
+
+If anything conflicts, the script stops with a message telling you what to
+change (see [Common scenarios](#common-scenarios)).
+
+### 4. Install
+
+```bash
+APP_PUBLIC_HOST=<public-ip-or-dns> ./ops/bootstrap.sh
+```
+
+`APP_PUBLIC_HOST` is the address users will type in the browser. Without it the
+script uses the machine's first IP, which on a cloud VM is usually the
+*internal* one. The address goes into the TLS certificate, the app URL and CORS.
+
+The script runs these steps and **stops at the first failure**:
+
+| Step | What happens |
+|---|---|
+| 0 · Pre-flight | Port, Node and Redis checks (as above), before anything is changed |
+| 1 · Packages | Node 20 (NodeSource), PostgreSQL + **pgvector** (adds the official `apt.postgresql.org` repo when the distro lacks it, e.g. Debian 12), Nginx, Redis |
+| 2 · Secrets | Configures a local Redis (**loopback only, generated password**), then writes `.env` (mode 600) with random JWT secret, vault key, DB password, Redis password and admin password. An existing `.env` is never overwritten. |
+| 3 · Database | Creates the `deepconsol` role and database plus the `vector` / `pg_trgm` extensions. Any SQL error aborts. |
+| 4 · Files | `/var/lib/deepconsol`, `/var/log/deepconsol`, and a 10-year self-signed certificate in `/etc/ssl/deepconsol/` |
+| 5 · App | Runs `ops/install.sh`: `npm ci` → build → migrations + seed → systemd units + Nginx site → restart → **health check** |
+
+The health check waits up to 60 s and verifies the API, the terminal gateway,
+the web UI, both Nginx routes and all three services:
+
+```text
+==> Health check (waiting up to 60s for services to come up)
+    OK   API            :5001
+    OK   Terminal WS gw :5002
+    OK   Web UI         :3002
+    OK   nginx → web    :443
+    OK   nginx → API    :443
+    OK   deepconsol-api active
+    OK   deepconsol-worker active
+    OK   deepconsol-web active
+```
+
+If any check fails, the script exits non-zero and prints the recent service
+logs. A typical first install takes about 5–10 minutes, mostly package
+downloads and the web build.
+
+### 5. Log in and finish setup
+
+1. Browse to `https://<public-ip-or-dns>/` and accept the self-signed
+   certificate warning.
+2. Log in as `admin@deepconsol.local`. The password is **not printed**; read it
+   with `grep SEED_ADMIN_PASSWORD .env`. You'll be taken to a screen to set your
+   own password.
+3. **Admin → LLM Config:** choose Gemini / OpenAI / Anthropic, paste the API
+   key, click **Test connection**, and save.
+4. **Admin → Embeddings:** add a Gemini key so documents are vector-indexed.
+5. **Admin → Groups / Users:** create engineer accounts and assign teams.
+6. **Admin → Documents:** upload your MOPs and vendor guides.
+
+### Script options
+
+Set these as environment variables before running (or prefix the command):
+
+| Variable | Effect |
+|---|---|
+| `APP_PUBLIC_HOST` | Public IP or DNS name users connect to (default: first local IP) |
+| `REDIS_URL` | Use an existing Redis instead of installing one, e.g. `redis://:password@127.0.0.1:6379/2`. Required when 6379 is already taken. |
+| `SKIP_PKG=1` | Skip all `apt` installs (dependencies are already present) |
+| `SKIP_NODE=1` | Never replace the system Node.js; abort if it's older than 20 |
+| `CHECK_ONLY=1` | Run the pre-flight checks only and change nothing |
+
+### Common scenarios
+
+**Port 6379 is already used** (for example by another app's Redis in Docker).
+The script refuses to install a second Redis on top of it. Either free the port,
+or reuse that Redis on purpose with a database index no other app uses:
+
+```bash
+REDIS_URL=redis://[:password@]127.0.0.1:6379/2 ./ops/bootstrap.sh
+```
+
+**Cloud VM / NAT.** Always pass `APP_PUBLIC_HOST`. If `.env` was already created
+with the wrong host, edit `APP_PUBLIC_HOST`, `APP_PUBLIC_URL` and
+`CORS_ALLOWED_ORIGINS` in `.env`, delete `/etc/ssl/deepconsol/server.{crt,key}`
+so the certificate is regenerated, and re-run the script.
+
+**Other apps need the system Node.js.** If the host's Node is older than 20 and
+other software depends on it, run with `SKIP_NODE=1`. The script will stop
+instead of upgrading it, and you can install Node 20 another way (for example
+with `nvm`).
+
+**Nginx already serves other sites.** DeepConsol adds its own site
+(`/etc/nginx/sites-available/deepconsol.conf`, `server_name _` on 443). If
+another site also listens on 443 as the catch-all, set a real `server_name` in
+`ops/nginx/deepconsol.conf` before installing.
+
+**Real TLS certificate.** Once a domain points at the server, see
+[Operations](#operations) for Let's Encrypt.
+
+### What gets installed where
+
+| Item | Location |
+|---|---|
+| Application and build output | The cloned directory |
+| Secrets | `<clone>/.env` (mode 600, git-ignored) |
+| Services | `deepconsol-api`, `deepconsol-worker`, `deepconsol-web` in `/etc/systemd/system/`, running as the installing user |
+| Nginx site | `/etc/nginx/sites-available/deepconsol.conf` (symlinked into `sites-enabled`) |
+| TLS certificate | `/etc/ssl/deepconsol/` |
+| Uploaded documents / logs | `/var/lib/deepconsol/` / `/var/log/deepconsol/` |
+| Database | PostgreSQL database and role `deepconsol` |
+| Redis | Local `redis-server` on loopback with a password, unless you passed `REDIS_URL` |
+
+### Updating
+
+```bash
+cd deepconsol
+git pull
+./ops/install.sh
+```
+
+`install.sh` rebuilds, applies new migrations, **restarts** the services so the
+new build is actually loaded, and runs the same health check. It never touches
+`.env`.
+
+### Install troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `Port N (...) is already in use by '<process>'` | Stop or move that process, or for 6379 use `REDIS_URL` (see above). Re-run. |
+| `Could not install postgresql-15-pgvector` | Check outbound access to `apt.postgresql.org`, or install pgvector for your PostgreSQL version manually, then re-run. |
+| `Node.js >= 20 is required ... SKIP_NODE` | Install Node 20+ yourself, or run without `SKIP_NODE` to let the script upgrade it. |
+| `Redis ... did not answer PING` | `REDIS_URL` in `.env` is wrong or that Redis requires a password. Fix `.env` and re-run. |
+| `Health check FAILED` | The script prints the last 40 log lines. For more: `sudo journalctl -u deepconsol-api -n 200`. |
+| Browser can't connect | Open TCP 443 in the firewall / cloud security group, and check that `APP_PUBLIC_HOST` is an address users can reach. |
+| Login says invalid credentials | Use the password from `.env`. The admin is created only **once**, so changing `SEED_ADMIN_PASSWORD` later has no effect. Reset it from another admin account. |
+
+Re-running `./ops/bootstrap.sh` is always safe. It keeps the existing `.env`
+and certificate and repeats only what's needed.
+
+### Uninstall
+
+```bash
+sudo systemctl disable --now deepconsol-api deepconsol-worker deepconsol-web
+sudo rm /etc/systemd/system/deepconsol-{api,worker,web}.service
+sudo rm /etc/nginx/sites-enabled/deepconsol.conf /etc/nginx/sites-available/deepconsol.conf
+sudo systemctl daemon-reload && sudo systemctl reload nginx
+sudo -u postgres dropdb deepconsol && sudo -u postgres dropuser deepconsol
+sudo rm -rf /var/lib/deepconsol /var/log/deepconsol /etc/ssl/deepconsol
+```
+
+This leaves the packages (Node, PostgreSQL, Redis, Nginx) installed. Delete the
+cloned directory last; it contains `.env`.
 
 ---
 
 ## Architecture
 
 ```
-                       Internet
-                          │ TCP 443
+                     Users (browser)
+                          │ HTTPS 443
                           ▼
                 ┌──────────────────┐
                 │      Nginx       │   TLS termination (self-signed by default)
                 │  (reverse proxy) │
                 └──┬───────┬─────┬─┘
-        /api/*     │       │ /   │  /terminal/connect/*  (WS upgrade)
-       (HTTP proxy)│       │     │
+        /api/*     │       │ /   │  /terminal/connect/*  (WebSocket)
                    ▼       ▼     ▼
             127.0.0.1:5001  3002  5002
-                API         Web   Terminal-WS
-                 │           │     │
-                 └─────┬─────┘     │
-                       ▼           │
-            ┌──────────────────┐   │
-            │ Postgres 15 +    │   │
-            │  pgvector / trgm │   │
-            ├──────────────────┤   │
-            │ Redis 7 (db 2)   │◄──┘
-            └──────────────────┘
-                       ▲
-            Worker (BullMQ) ── pulls ingest jobs from Redis, reads docs
-                               from disk, parses + chunks + embeds, writes
-                               to pgvector
+                API         Web   Terminal gateway ──SSH/Telnet──► network devices
+                 │                 │
+                 ├────────┬────────┘
+                 ▼        ▼
+       ┌──────────────┐ ┌──────────────┐
+       │ PostgreSQL 15│ │ Redis (db 2) │◄── Worker (BullMQ): parse → sanitize →
+       │ + pgvector   │ └──────────────┘    chunk → embed documents into pgvector
+       │ + pg_trgm    │◄────────────────────────────┘
+       └──────────────┘
+                 │
+                 └──► AI provider (Gemini / OpenAI / Anthropic) — sanitized text only
 ```
 
-All app ports (`3002`, `5001`, `5002`) bind to `127.0.0.1` only; only Nginx
-(`443`) is public. The API process also hosts the terminal WS gateway on `5002`.
+All app ports (`3002`, `5001`, `5002`) bind to `127.0.0.1`; only Nginx (`443`) is
+exposed. The API process also hosts the terminal gateway on `5002`.
 
 ---
 
@@ -117,11 +369,11 @@ All app ports (`3002`, `5001`, `5002`) bind to `127.0.0.1` only; only Nginx
 | Backend API | Fastify 5, TypeScript, Zod, JWT (HttpOnly cookies), bcrypt |
 | Terminal gateway | Fastify WebSocket plugin, `ssh2` (SSH + PTY), in-house Telnet client |
 | Worker | BullMQ on Redis; `pdf-parse` / `mammoth` / `jszip`+`xml2js` / `exceljs` / `csv-parse` / `cheerio` |
-| RAG store | Postgres 15 + `pgvector` (3072-dim) + `pg_trgm`; hybrid retrieval, group-isolated in SQL |
-| AI — chat | Gemini / OpenAI / Anthropic (provider-pluggable, admin-selectable) |
-| AI — embeddings | Gemini Embedding (`gemini-embedding-001`, 3072 dims) |
+| RAG store | PostgreSQL 15 + `pgvector` (3072-dim) + `pg_trgm`; hybrid retrieval, group-isolated in SQL |
+| AI (chat) | Gemini / OpenAI / Anthropic (provider-pluggable, admin-selectable) |
+| AI (embeddings) | Gemini Embedding (`gemini-embedding-001`, 3072 dims) |
 | TLS | Self-signed by default; swap for Let's Encrypt once a domain points at the host |
-| Process mgmt | systemd units (`deepconsol-api`, `deepconsol-worker`, `deepconsol-web`) |
+| Process management | systemd units (`deepconsol-api`, `deepconsol-worker`, `deepconsol-web`) |
 
 ---
 
@@ -130,9 +382,9 @@ All app ports (`3002`, `5001`, `5002`) bind to `127.0.0.1` only; only Nginx
 ```
 deepconsol/
 ├── package.json                 # npm workspaces root
-├── .env.example                 # config template (copy → .env, fill in secrets)
+├── .env.example                 # config template (bootstrap.sh generates .env from it)
 ├── apps/
-│   ├── api/                     # Fastify HTTP API + WS terminal gateway
+│   ├── api/                     # Fastify HTTP API + WebSocket terminal gateway
 │   │   └── src/
 │   │       ├── routes/          # auth, users, groups, ssh-credentials, terminal,
 │   │       │                    # chat, knowledge, llm-config, embedding-config,
@@ -147,126 +399,21 @@ deepconsol/
 ├── packages/
 │   └── shared/                  # browser-safe: types, sanitizer, risk classifier, playbooks
 └── ops/
-    ├── install.sh               # one-shot install / update
-    ├── nginx/deepconsol.conf
-    └── systemd/*.service
+    ├── bootstrap.sh             # first-time install on a fresh host (start here)
+    ├── install.sh               # build + migrate + (re)start + health check; used for updates
+    ├── publish.sh               # push to GitHub with a short-lived token
+    ├── nginx/deepconsol.conf    # TLS reverse proxy site
+    └── systemd/*.service        # api / worker / web units
 ```
 
----
+### Developer scripts
 
-## Getting started
+| Script | Use it when |
+|---|---|
+| `ops/publish.sh` | Pushing to GitHub with a PAT from `GITHUB_TOKEN` (never written to `.git/config`): `GITHUB_TOKEN=… ./ops/publish.sh [remote-url] [branch]`. Revoke the token afterwards. |
+| `npm run dev:api` / `dev:worker` / `dev:web` | Local development in watch mode (no systemd) |
 
-### Prerequisites
-
-- Linux host, **Node.js ≥ 20**
-- **PostgreSQL 15** with `pgvector` and `pg_trgm`
-- **Redis 7**
-- **Nginx** (TLS reverse proxy)
-- An API key for at least one chat provider (Gemini / OpenAI / Anthropic) and a
-  Gemini key for embeddings. AI features degrade gracefully with a clear
-  "not configured" message until a key is set.
-
-### Install scripts at a glance
-
-All operational scripts live in [`ops/`](ops/):
-
-| Script | Use it when | What it does |
-|---|---|---|
-| **`ops/bootstrap.sh`** | First time, on a fresh host | Installs prerequisites, generates `.env` with random secrets, sets up the DB + cert + dirs, then runs `install.sh`. **Start here.** |
-| **`ops/install.sh`** | Redeploy after a `git pull` | `npm ci` → build all workspaces → migrate + seed → install/start systemd units + Nginx → health-check every service. Assumes prerequisites + `.env` exist. |
-| **`ops/publish.sh`** | Pushing to GitHub | Pushes with a PAT from `GITHUB_TOKEN` (never persisted). |
-| `npm run dev:*` | Local development | Watch-mode API / worker / web (no systemd). |
-
-### One-command install (fresh host)
-
-On a clean Debian/Ubuntu VM, `ops/bootstrap.sh` does the whole first-time setup:
-
-```bash
-git clone https://github.com/s-ttp/DeepConsol.git deepconsol
-cd deepconsol
-./ops/bootstrap.sh
-```
-
-It will:
-
-0. Run **pre-flight checks** before touching the host: ports 443/5001/5002/3002
-   (and 6379 if it will install Redis) must be free or already DeepConsol's/nginx's,
-   Node ≥ 20 (it warns before replacing the system Node), and a warning if the
-   auto-detected host is a private IP.
-1. Install prerequisites (Node 20, PostgreSQL + pgvector, Redis, Nginx) if missing.
-   pgvector is pulled from the PostgreSQL apt repo (apt.postgresql.org) when the
-   distro doesn't ship it (e.g. Debian 12).
-2. Configure a local Redis bound to loopback **with a generated password** (unless
-   you pass `REDIS_URL`), then generate `.env` with **strong random secrets**
-   (JWT secret, vault KEK, DB password, Redis password, seed admin password) —
-   only if `.env` doesn't already exist.
-3. Create the Postgres role + database + `vector`/`pg_trgm` extensions. Any SQL
-   error aborts the script.
-4. Create runtime dirs and a self-signed TLS cert.
-5. Build, migrate, seed, install the systemd units + Nginx site, start
-   everything, and **health-check** each service (direct and through Nginx) —
-   exiting non-zero with recent logs if anything isn't up.
-
-It's **idempotent** — safe to re-run; it won't overwrite an existing `.env` or
-regenerate the TLS cert.
-
-**Options** (export before running, or prefix the command):
-
-| Variable | Effect | Example |
-|---|---|---|
-| `APP_PUBLIC_HOST` | Set the public IP/host (otherwise auto-detected) | `APP_PUBLIC_HOST=203.0.113.10 ./ops/bootstrap.sh` |
-| `REDIS_URL` | Use an existing Redis instead of installing one (required if 6379 is already taken) | `REDIS_URL=redis://:pw@127.0.0.1:6379/2 ./ops/bootstrap.sh` |
-| `SKIP_PKG` | Skip apt package installation (deps already present) | `SKIP_PKG=1 ./ops/bootstrap.sh` |
-| `SKIP_NODE` | Never replace the system Node.js (abort if it's < 20) | `SKIP_NODE=1 ./ops/bootstrap.sh` |
-| `CHECK_ONLY` | Run the pre-flight checks only; change nothing | `CHECK_ONLY=1 ./ops/bootstrap.sh` |
-
-**After it finishes** the script prints the URL. The generated seed-admin
-password is **not** printed — it's `SEED_ADMIN_PASSWORD` in `.env`. Then:
-
-1. Browse to `https://<your-host>/` and accept the self-signed cert.
-2. Log in as `admin@deepconsol.local` with the seed password — you'll be forced
-   to rotate it on first login.
-3. Enable AI: add a provider key in **Admin → LLM Config** (and an embedding key
-   in **Admin → Embeddings**). Until then, AI features show a clear
-   "not configured" message instead of erroring.
-
-Check status / logs any time:
-
-```bash
-sudo systemctl status deepconsol-api deepconsol-worker deepconsol-web
-sudo journalctl -u deepconsol-api -f
-```
-
-### Rebuild / redeploy (already set up)
-
-When prerequisites and `.env` already exist (e.g. after `git pull`), use the
-lighter installer:
-
-```bash
-cp .env.example .env          # first time only — then fill in real secrets
-./ops/install.sh
-```
-
-`install.sh` runs `npm ci` → builds all four workspaces → runs DB migrations and
-seed → renders & installs the Nginx site and three systemd units (portable to any
-checkout path / user) → enables and starts everything → health-checks the API,
-terminal gateway, web UI and Nginx routes (exits non-zero with recent logs on failure).
-
-### Publishing to GitHub
-
-`ops/publish.sh` pushes the repo using a token supplied via the environment — the
-token is injected into the push URL only for the command and is **never written
-to `.git/config` or committed**:
-
-```bash
-GITHUB_TOKEN=ghp_xxx ./ops/publish.sh
-# or target a specific remote/branch:
-GITHUB_TOKEN=ghp_xxx ./ops/publish.sh https://github.com/<owner>/<repo>.git main
-```
-
-> Treat the PAT as disposable — revoke it once you're done.
-
-### Local development
+Local development:
 
 ```bash
 npm install
@@ -286,29 +433,31 @@ Build one workspace with `npm run build:shared | build:api | build:worker | buil
 
 ## Configuration (`.env`)
 
-Copy `.env.example` to `.env` and fill in real values. **`.env` is gitignored —
-never commit real secrets.** Generate the two cryptographic secrets with
-`openssl rand`.
+`ops/bootstrap.sh` generates `.env` from `.env.example` with random secrets. For a
+manual setup, copy it and fill in real values, generating the two cryptographic
+secrets with `openssl rand`. **`.env` is gitignored; never commit real secrets.**
+After editing `.env`, restart the services (see [Operations](#operations)).
 
 | Variable | Purpose |
 |---|---|
 | `APP_PUBLIC_HOST` / `APP_PUBLIC_URL` | Public host/URL for CORS and links |
-| `API_PORT` (5001) · `TERMINAL_WS_PORT` (5002) · `WEB_PORT` (3002) | Internal ports (bind 127.0.0.1) |
+| `API_PORT` (5001) · `TERMINAL_WS_PORT` (5002) | Internal ports (bind 127.0.0.1). The web UI port (3002) is set in `ops/systemd/deepconsol-web.service` and `ops/nginx/deepconsol.conf`; `WEB_PORT` is not read. |
 | `DATABASE_URL` | Postgres connection string (contains the DB password) |
-| `REDIS_URL` | Redis URL (uses db index 2 by default) |
+| `REDIS_URL` | Redis URL, e.g. `redis://:password@127.0.0.1:6379/2` (bootstrap generates the password) |
 | `JWT_SECRET` | HS256 signing secret — `openssl rand -hex 32` |
 | `JWT_TTL_HOURS` (12) | Session lifetime |
 | `SSH_CRED_ENCRYPTION_KEY` | **KEK** for the AES-256-GCM vault — base64 32 bytes, `openssl rand -base64 32` |
-| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Bootstrap admin (forced rotation on first login) |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Initial admin, created once on first install (marked must-change-password) |
 | `GEMINI_API_KEY` | Default Gemini key (embeddings; chat fallback when no key saved) |
 | `GEMINI_CHAT_MODEL` / `GEMINI_EMBEDDING_MODEL` | Default model names (overridable in the admin UI) |
 | `GEMINI_WEB_GROUNDING_ENABLED` | Allow Google-Search grounding in "Web grounded" chat mode |
-| `STORAGE_DRIVER` / `STORAGE_FS_ROOT` | Object storage (filesystem default; `Storage` interface is S3/MinIO-swappable) |
+| `STORAGE_FS_ROOT` | Where uploaded documents are stored (filesystem). `STORAGE_DRIVER` is reserved; only `fs` exists today. |
 | `UPLOAD_MAX_BYTES` · `INGEST_CHUNK_TARGET_TOKENS` (512) · `INGEST_CHUNK_OVERLAP_TOKENS` (64) | Upload + chunking |
-| `TERMINAL_IDLE_TIMEOUT_SEC` (1800) · `TERMINAL_MAX_SESSIONS_PER_USER` (8) · `TERMINAL_DEFAULT_SCROLLBACK` | Terminal limits |
-| `CHAT_HISTORY_RETENTION_DAYS` · `CHAT_MAX_CONCURRENT_PER_USER` | Chat limits |
+| `TERMINAL_IDLE_TIMEOUT_SEC` (1800) · `TERMINAL_MAX_SESSIONS_PER_USER` (8) | Terminal limits (idle time counts keystrokes, not output) |
+| `CHAT_HISTORY_RETENTION_DAYS` · `CHAT_MAX_CONCURRENT_PER_USER` · `TERMINAL_DEFAULT_SCROLLBACK` | **Reserved; not enforced yet** |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated allowed browser origins |
 | `LOG_LEVEL` | Pino log level |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` / `NODE_EXTRA_CA_CERTS` | Optional outbound proxy (and corporate CA bundle) for calls to the AI providers |
 
 > The chat provider/model/keys, embedding model, and sanitizer rules are
 > **runtime settings managed from the admin console** and stored in the database;
@@ -324,7 +473,8 @@ Email:    admin@deepconsol.local        (SEED_ADMIN_EMAIL)
 Password: see SEED_ADMIN_PASSWORD in your .env
 ```
 
-You are forced to rotate the password on first login.
+The web UI sends you to a change-password screen on first login (and for any
+account an admin flags with *force password rotation*).
 
 ---
 
@@ -692,10 +842,16 @@ sudo journalctl -u deepconsol-worker -f
 # Restart after a .env change
 sudo systemctl restart deepconsol-api deepconsol-worker deepconsol-web
 
-# Re-run migrations after pulling code
-cd /path/to/deepconsol && npm run build && node apps/api/dist/db/migrate.js
-sudo systemctl restart deepconsol-api deepconsol-worker deepconsol-web
+# Update to the latest code (rebuild, migrate, restart, health check)
+cd /path/to/deepconsol && git pull && ./ops/install.sh
+
+# Database shell
+sudo -u postgres psql deepconsol
 ```
+
+Back up the PostgreSQL database (`pg_dump deepconsol`), `/var/lib/deepconsol/docs`
+and `.env` together. **Without `SSH_CRED_ENCRYPTION_KEY` from `.env`, saved SSH
+credentials and AI keys in the database can't be decrypted.**
 
 Enable a real TLS cert once a domain points at the host:
 
@@ -721,9 +877,9 @@ sudo certbot --nginx -d your.domain
 - **Network posture** — app ports bound to loopback; only Nginx is public; JWT in
   HttpOnly / Secure / SameSite cookies.
 
-> This is an MVP. Recommended hardening before production: enable login
-> rate-limiting, add SSH host-key verification and/or an allow-list for terminal
-> targets, and front the app with a real TLS certificate. Track these in the
+> This is an MVP. Before production, read [Known limitations](#known-limitations).
+> In particular, restrict which hosts the terminal gateway can reach, and use a
+> real TLS certificate. Track hardening work in the
 > [issues](https://github.com/s-ttp/DeepConsol/issues) tab.
 
 ---
@@ -737,8 +893,31 @@ sudo certbot --nginx -d your.domain
   so S3/MinIO is a drop-in replacement.
 - **Embeddings are Gemini-only** — the vector column is fixed at 3072 dims;
   changing providers needs a column change + full reindex.
-- **Redis-persisted ingest jobs** (db 2) — if Redis is wiped, queued jobs vanish
-  and affected documents move to `error` status (re-indexable from the UI).
+- **Redis-persisted ingest jobs.** If Redis is wiped, queued jobs vanish and
+  affected documents can be re-indexed from the UI.
+
+Security hardening still to do (MVP):
+
+- **Terminal targets aren't restricted.** Users can open sessions to any host
+  and port the server can reach. Deploy the server in a network segment that can
+  reach only the devices engineers should manage, and keep other services on the
+  host (Redis, databases, cloud metadata) unreachable or password-protected. An
+  admin-managed allow-list is planned.
+- **No SSH host-key verification yet**, so a man-in-the-middle on the management
+  network isn't detected.
+- **Sessions can't be revoked early.** Logout clears the browser cookie, but a
+  login token stays valid until `JWT_TTL_HOURS`. Role changes and deleted users
+  take effect when the token expires.
+- **Password-change-on-first-login is enforced by the web UI only**, not by the
+  API.
+- **No login rate limiting or lockout.**
+- **Sanitizer coverage gaps.** These are not yet masked: Cisco `password 0`,
+  `secret 8/9`, TACACS/RADIUS/ISAKMP keys, SNMPv3 `auth`/`priv` passphrases, and
+  Juniper `$9$` secrets. Long plain numbers (e.g. interface counters, timestamps)
+  can be over-masked as `MSISDN_nnn`. Add custom rules in **Admin → Filters** for
+  anything specific to your network.
+- **Bastion / jump-host fields** on saved credentials are stored but not yet used
+  for connections.
 
 ---
 
