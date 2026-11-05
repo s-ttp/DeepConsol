@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { buildTargetPolicy, checkIp, resolveTarget, parseCidr } from "../dist/services/target-policy.js";
 
 // Fixed "server addresses" so results don't depend on the test machine.
-const SELF = ["127.0.0.1", "::1", "10.212.0.6", "172.17.0.1", "fe80::42:deff:fe14:46ed%docker0"];
+const SELF = ["127.0.0.1", "::1", "192.0.2.6", "198.51.100.1", "fe80::db8:1%docker0"];
 const policy = (o = {}) => buildTargetPolicy({ selfAddresses: () => SELF, ...o });
 const denied = (p, ip) => { const d = checkIp(p, ip); assert.equal(d.ok, false, `${ip} should be denied`); return d.reason; };
 const allowed = (p, ip) => assert.equal(checkIp(p, ip).ok, true, `${ip} should be allowed`);
@@ -30,23 +30,23 @@ test("IPv4-mapped IPv6 can't bypass IPv4 rules", () => {
   const p = policy();
   assert.match(denied(p, "::ffff:127.0.0.1"), /loopback/);
   assert.match(denied(p, "::ffff:169.254.169.254"), /metadata/);
-  assert.match(denied(p, "[::ffff:10.212.0.6]"), /this server/);
+  assert.match(denied(p, "[::ffff:192.0.2.6]"), /this server/);
 });
 
 test("the server's own interface addresses are denied", () => {
   const p = policy();
-  assert.match(denied(p, "10.212.0.6"), /this server/);
-  assert.match(denied(p, "172.17.0.1"), /this server/);
+  assert.match(denied(p, "192.0.2.6"), /this server/);
+  assert.match(denied(p, "198.51.100.1"), /this server/);
 });
 
 test("default: private and public device addresses are allowed", () => {
   const p = policy();
-  for (const ip of ["10.0.0.1", "10.212.0.7", "172.16.5.4", "192.168.1.1", "203.0.113.7", "2001:db8::1", "fd12:3456::1"]) allowed(p, ip);
+  for (const ip of ["10.0.0.1", "10.0.0.7", "172.16.5.4", "192.168.1.1", "203.0.113.7", "2001:db8::1", "fd12:3456::1"]) allowed(p, ip);
 });
 
 test("admin deny list", () => {
-  const p = policy({ deniedCidrs: ["172.18.0.0/16", "192.0.2.10"] });
-  assert.match(denied(p, "172.18.0.2"), /TERMINAL_DENIED_CIDRS/);
+  const p = policy({ deniedCidrs: ["198.51.100.128/25", "192.0.2.10"] });
+  assert.match(denied(p, "198.51.100.130"), /TERMINAL_DENIED_CIDRS/);
   assert.match(denied(p, "192.0.2.10"), /TERMINAL_DENIED_CIDRS/);
   allowed(p, "192.0.2.11");
 });
@@ -59,7 +59,7 @@ test("admin allow list restricts to listed ranges, and built-in denies still win
   assert.match(denied(p, "8.8.8.8"), /not in TERMINAL_ALLOWED_CIDRS/);
   const wide = policy({ allowedCidrs: ["0.0.0.0/0"] });
   assert.match(denied(wide, "127.0.0.1"), /loopback/);
-  assert.match(denied(wide, "10.212.0.6"), /this server/);
+  assert.match(denied(wide, "192.0.2.6"), /this server/);
 });
 
 test("invalid CIDRs throw (fail closed at startup)", () => {
@@ -95,18 +95,18 @@ test("self-address detection reads the kernel's local addresses (incl. down inte
   const { parseFibTrieLocal, parseIfInet6 } = await import("../dist/services/target-policy.js");
   const fib = `Local:
   +-- 0.0.0.0/0 3 0 5
-     |-- 10.212.0.6
+     |-- 192.0.2.6
         /32 host LOCAL
-     |-- 10.212.0.255
+     |-- 192.0.2.255
         /32 link BROADCAST
-     +-- 172.17.0.0/16 2 0 2
-        |-- 172.17.0.1
+     +-- 198.51.100.0/24 2 0 2
+        |-- 198.51.100.1
            /32 host LOCAL
 `;
-  assert.deepEqual(parseFibTrieLocal(fib).sort(), ["10.212.0.6", "172.17.0.1"]);
-  const inet6 = "fe80000000000000004242fffe1446ed 04 40 20 80  docker0\n00000000000000000000000000000001 01 80 10 80       lo\n";
+  assert.deepEqual(parseFibTrieLocal(fib).sort(), ["192.0.2.6", "198.51.100.1"]);
+  const inet6 = "fe800000000000000000000000000db8 04 40 20 80  docker0\n00000000000000000000000000000001 01 80 10 80       lo\n";
   const addrs = parseIfInet6(inet6);
-  assert.deepEqual(addrs, ["fe80:0000:0000:0000:0042:42ff:fe14:46ed", "0000:0000:0000:0000:0000:0000:0000:0001"]);
+  assert.deepEqual(addrs, ["fe80:0000:0000:0000:0000:0000:0000:0db8", "0000:0000:0000:0000:0000:0000:0000:0001"]);
   // Expanded kernel form must still match the compressed form users type.
   const p = buildTargetPolicy({ selfAddresses: () => ["2001:0db8:0000:0000:0000:0000:0000:0042"] });
   assert.match(checkIp(p, "2001:db8::42").reason, /this server/);

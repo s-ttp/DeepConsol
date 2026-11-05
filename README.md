@@ -1,5 +1,8 @@
 # DeepConsol
 
+[![CI](https://github.com/s-ttp/DeepConsol/actions/workflows/ci.yml/badge.svg)](https://github.com/s-ttp/DeepConsol/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Smart SSH/Telnet terminal with embedded AI Co-pilot for Network Engineers.**
 
 DeepConsol gives network engineers one browser screen with three linked panes:
@@ -45,6 +48,7 @@ installs with **one command** ([Quick start](#quick-start)).
 - [Operations](#operations)
 - [Security model summary](#security-model-summary)
 - [Known limitations](#known-limitations)
+- [Contributing & security reports](#contributing--security-reports)
 - [License](#license)
 
 ---
@@ -1121,6 +1125,17 @@ Security hardening still to do (MVP):
   `IMSI_nnn`.
 - **Bastion / jump-host fields** on saved credentials are stored but not yet used
   for connections.
+
+---
+
+## Contributing & security reports
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development setup, tests and PR checklist. The most important rule: **never post
+real device output, credentials or subscriber data** in issues or PRs.
+
+Found a vulnerability? Please **don't open a public issue**. Report it privately
+as described in [SECURITY.md](SECURITY.md).
 
 ---
 

@@ -1,0 +1,58 @@
+name: 🧹 Sanitizer gap
+description: A secret or identifier wasn't masked — or normal output was wrongly masked.
+labels: ["sanitizer"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help improve the filters that keep sensitive data away from the AI.
+        **Use FAKE values in the real format** — never paste a real secret, IMSI, MSISDN,
+        public IP or customer name, even if it's "only a test".
+        Formats the README already lists as not covered (Cisco type 0/8/9, TACACS/RADIUS/ISAKMP
+        keys, SNMPv3, Juniper `$9$`) are welcome here as requests for built-in rules.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of problem
+      options:
+        - Not masked (a secret / identifier got through)
+        - Over-masked (normal output was replaced, e.g. a counter became MSISDN_001)
+        - Wrong alias / garbled output
+    validations:
+      required: true
+  - type: input
+    id: vendor
+    attributes:
+      label: Vendor / platform / command
+      placeholder: Cisco IOS-XE 17.9, `show running-config | section tacacs`
+  - type: textarea
+    id: input
+    attributes:
+      label: Sample input (fake values, real format)
+      render: text
+      placeholder: tacacs-server key 7 0822455D0A16
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual sanitized output
+      description: From the Send to Chat preview or Admin → Filters → Test filters.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      render: text
+      placeholder: tacacs-server key 7 [REDACTED]
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Before submitting
+      options:
+        - label: Every value in this report is fake.
+          required: true
