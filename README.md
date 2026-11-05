@@ -34,7 +34,7 @@ installs with **one command** ([Quick start](#quick-start)).
 - [First login](#first-login)
 - [The workspace](#the-workspace)
 - [Knowledge base & RAG](#knowledge-base--rag)
-- [Security filtering (the sanitizer)](#security-filtering-the-sanitizer)
+- [Security & privacy features](#security--privacy-features)
 - [Context drawer](#context-drawer)
 - [Terminal & safety model](#terminal--safety-model)
 - [Troubleshooting playbooks](#troubleshooting-playbooks)
@@ -94,8 +94,11 @@ DeepConsol puts the AI next to the terminal, and inside your controls.
   *Send to chat → sanitization preview*. There's no raw selection, paste or drag
   path.
 - **Two-pass security filtering.** Strips secrets and pseudonymizes telecom/PII
-  identifiers on the **client before chat** and again on the **server**. 35
-  built-in rules, each individually toggleable, plus admin-defined custom rules.
+  identifiers (IMSI, MSISDN, IMEI, ICCID, SUPI/GUTI, PLMN/TAC/APN, cell IDs, IPs,
+  hostnames) on the **client before chat** and again on the **server**. 35
+  built-in rules, each individually toggleable, plus admin-defined custom rules
+  (e.g. alias your national MSISDN format or customer names). See
+  [Security & privacy features](#security--privacy-features).
 - **Group-isolated RAG.** Hybrid (vector + full-text + trigram) retrieval over
   `pgvector`, with `global`/`group`/`private` visibility enforced in SQL.
   Unauthorized chunks are never read, embedded into a prompt, or cited.
@@ -488,7 +491,7 @@ The engineer's main screen (`/workspace`) is a resizable three-pane layout:
 │  — SSH / Telnet tabs          │   — KB-grounded
 │  — right-click selection →    │     answers   │
 │      Send to Chat / Pin /     │   — provenance
-│      Copy Sanitized / Raw     │     badges    │
+│      Copy Sanitized           │     badges    │
 │                               │   — Review &  │
 │                               │     Copy modal│
 ├───────────────────────────────┤               │
@@ -604,70 +607,211 @@ echoing raw values.
 
 ---
 
-## Security filtering (the sanitizer)
+## Security & privacy features
+
+DeepConsol's security controls at a glance. Each one is explained in more detail below.
+
+| Area | Control | Who can change it |
+|---|---|---|
+| **Data sent to AI** | Two-pass sanitizer: secrets **redacted**, subscriber and network identifiers **pseudonymized** (IMSI, MSISDN, IMEI, ICCID, SUPI/GUTI, PLMN/TAC/APN, cell IDs, IPs, MACs, hostnames…) | Admin: toggle each rule, add custom rules |
+| | Editable sanitization **preview** before terminal text enters chat | Engineer (per message) |
+| | Knowledge-base documents sanitized **before indexing** | Same filter settings as chat |
+| | No automatic terminal → AI path | Fixed by design |
+| **AI output** | Command **risk classification** (low / medium / high / critical) with typed `I UNDERSTAND` for high and critical | Fixed rules |
+| | AI can't execute anything; it only suggests | Fixed by design |
+| **Access** | Roles: `engineer` / `admin`. Admin console is admin-only. | Admin (Users) |
+| | Knowledge-base visibility: `global` / `group` / `private`, enforced in SQL | Admin (Documents, Groups) |
+| | SSH credentials, terminal sessions and chat threads visible only to their owner | Fixed |
+| **Secrets at rest** | SSH credentials and AI provider keys encrypted with AES-256-GCM; key only in `.env` | Install-time key |
+| | User passwords hashed with bcrypt (cost 12) | Fixed |
+| **Sessions** | JWT in an HttpOnly, Secure, SameSite=Lax cookie; 12 h lifetime | `JWT_TTL_HOURS` |
+| | Password change required on first login and on admin request | Admin (Users) |
+| **Terminal** | Per-user session cap, idle timeout, orphaned-session cleanup | `TERMINAL_MAX_SESSIONS_PER_USER`, `TERMINAL_IDLE_TIMEOUT_SEC` |
+| **Network** | App ports on loopback only; Nginx TLS with HSTS, `X-Frame-Options: DENY`, `nosniff`, strict referrer and permissions policy | `ops/nginx/deepconsol.conf` |
+| | Local Redis bound to loopback with a password (bootstrap) | `REDIS_URL` |
+| **Host** | systemd hardening: `NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome=read-only`, `PrivateTmp`, restricted write paths | `ops/systemd/*.service` |
+| **Accountability** | Audit log of sensitive actions with redacted metadata (content stored as hashes) | — |
+
+### The sanitizer
 
 The sanitizer ([packages/shared/src/sanitizer.ts](packages/shared/src/sanitizer.ts))
-is the core of the no-leak design. It runs in **both** the browser and Node, and
-is applied at **two independent points**:
+is one engine that runs in both the browser and the server, so the preview you
+see is what the server enforces.
 
-```
-   terminal / KB doc / user input
-            │
-   ┌────────▼─────────┐   client pass (before text enters the chat composer
-   │  sanitize()      │   or the context drawer)
-   └────────┬─────────┘
-            │  (server must NEVER trust the client)
-   ┌────────▼─────────┐   server pass (before retrieval, prompt construction,
-   │  sanitize()      │   the AI call, web grounding, and history storage; and
-   └────────┬─────────┘   on every document chunk at ingestion)
-            ▼
-        AI provider
-```
+**Where it runs:**
 
-It does two kinds of masking:
+| Point | Side | What happens |
+|---|---|---|
+| Terminal → **Send to Chat** | Browser | Shows a preview with redaction/pseudonymization counts; you can edit the text before it goes into the composer |
+| Terminal → **Pin to Drawer** | Browser | Snippets are sanitized before they appear in the drawer |
+| Terminal → **Copy Sanitized** | Browser | Copies the sanitized text to the clipboard (e.g. for tickets or email) |
+| **Every chat message** (typed text and attached snippets) | Server | Re-sanitized before retrieval, the AI call, web grounding and storage. **The server never trusts the browser's pass.** |
+| **Document ingestion** | Worker | Every page, slide or sheet is sanitized before chunking and embedding, so secrets never enter the knowledge base |
 
-- **Redaction** — the value is destroyed and replaced with a tag like
-  `[REDACTED:PRIVATE_KEY]`.
-- **Pseudonymization** — the value is replaced with a **stable alias**
-  (`IMSI_001`, `IP_001`, `HOST_001`, …). Aliasing is deterministic *within a
-  message*, so the model can still reason about "the same IMSI appears twice"
-  without ever seeing the real value. **Private/loopback IP ranges are
-  deliberately preserved** so internal topology stays readable.
+**Two kinds of masking:**
 
-### Built-in rules (35 baseline)
+- **Redact:** the value is destroyed and replaced by a tag, e.g. `[REDACTED:PRIVATE_KEY]`.
+- **Pseudonymize:** the value is replaced by an **alias** such as `IMSI_001`,
+  so the AI can still reason about it ("the same IMSI appears in both
+  traces") without seeing the real value.
 
-**Redaction (24):** SSH / PGP / PuTTY private keys, SSH public keys, JWTs,
-Authorization / Bearer / Basic headers, cookies, AWS & Google API keys,
-GitHub / Slack / Stripe / SendGrid / Google-OAuth tokens,
-`api_key`/`token`/`password` key-value pairs, Cisco `password 7` / `secret 5` /
-`enable secret`, Unix & bcrypt password hashes, **connection strings with
-embedded credentials**, SNMP communities, **SIM auth keys (Ki / OPc)**, emails,
-E.164 phone numbers, credit cards.
+### Built-in rules (35)
 
-**Pseudonymization (11):** IMSI, IMEI, MSISDN, **ICCID**, **SUPI / SUCI / GUTI /
-TMSI**, **PLMN / TAC / LAC / RAC / eNB / gNB / APN**, cell IDs, public IPv4 / IPv6,
-MAC addresses, hostnames.
+The examples below are actual sanitizer output.
 
-### Admin-editable overlay
+**Secrets: redacted (24 rules)**
 
-In **Admin → Filters**, the built-in rules are a **locked safe baseline** — each
-can be toggled **on/off** but its pattern can't be rewritten, so a typo can never
-silently weaken core protection. On top of the baseline, admins add **custom
-rules** with a guided builder:
+| Rule (name in Admin → Filters) | Masks | Example |
+|---|---|---|
+| `ssh-private-key-block` | OpenSSH / PEM private keys | `-----BEGIN OPENSSH PRIVATE KEY----- …` → `[REDACTED:PRIVATE_KEY]` |
+| `pgp-private-key-block` | PGP private key blocks | → `[REDACTED:PRIVATE_KEY]` |
+| `putty-private-key` | PuTTY `.ppk` keys | → `[REDACTED:PRIVATE_KEY]` |
+| `openssh-pubkey-with-comment` | `ssh-rsa` / `ssh-ed25519` / `ecdsa` public keys (+ comment) | `ssh-ed25519 AAAAC3… noc@jump01` → `[REDACTED:SSH_KEY]` |
+| `authorization-header` | HTTP `Authorization:` headers | → `Authorization: [REDACTED]` |
+| `cookie-header` | `Cookie` / `Set-Cookie` values | → `Cookie: [REDACTED]` |
+| `bearer-token` | Bearer tokens | `Bearer abcdef1234567890xyz` → `Bearer [REDACTED]` |
+| `basic-auth` | Basic-auth credentials | → `Basic [REDACTED]` |
+| `jwt` | JSON Web Tokens | `eyJhbGci….eyJzdWIi….c2ln…` → `[REDACTED:JWT]` |
+| `connection-string-creds` | `user:pass@` inside URIs | `mongodb://admin:S3cret@db…` → `mongodb://[REDACTED]@HOST_001:27017` |
+| `aws-access-key` | AWS key IDs (`AKIA…`/`ASIA…`) | → `[REDACTED:AWS_ACCESS_KEY]` |
+| `google-api-key` | Google API keys (`AIza…`) | → `[REDACTED:API_KEY]` |
+| `cloud-provider-token` | GitHub, Slack, Stripe, SendGrid, Google OAuth tokens | → `[REDACTED:TOKEN]` |
+| `generic-api-key-kv` | `api_key=…`, `x-api-key: …` | `api_key=9f8e7d6c5b4a3f2e1d0c` → `api_key: [REDACTED]` |
+| `generic-token-kv` | `token=…`, `access_token=…`, `secret=…` | → `token: [REDACTED]` |
+| `password-kv` | `password: …`, `passwd=…`, `pwd=…`, `enable_secret=…` | `password: Winter2026!` → `password: [REDACTED]` |
+| `cisco-type7-password` | Cisco `password 7` / `secret 5` | `password 7 0822455D0A16` → `password 7 [REDACTED]` |
+| `cisco-enable-secret` | Cisco `enable secret …` | → `enable secret [REDACTED]` |
+| `unix-password-hash` | Shadow / bcrypt hashes (`$1$`, `$5$`, `$6$`, `$2y$`) | `root:$6$…:19000` → `root:[REDACTED:HASH]:19000` |
+| `sim-auth-key` | SIM keys **Ki / OP / OPc** (32 hex) | `Ki=465B5CE8…` → `Ki: [REDACTED]` |
+| `snmp-community` | `snmp-server community …` | `snmp-server community Publ1cR0 RO` → `snmp-server community [REDACTED] RO` |
+| `credit-card` | Card numbers with separators | `4111-1111-1111-1111` → `[REDACTED:CARD]` |
+| `email` | Email addresses | `noc.lead@operator.com` → `[REDACTED:EMAIL]` |
+| `phone-e164` | Phone numbers with a leading `+` | `+966501234567` → `[REDACTED:PHONE]` |
 
-- A **literal** string or a **wildcard** pattern (`*` = any run of non-space
-  chars, `?` = one char) — **no raw regex**, so there is no ReDoS risk.
-- An action of **Redact** or **Pseudonymize** (with a chosen alias prefix).
+**Subscriber and network identifiers: pseudonymized (11 rules)**
 
-A **Test filters** box previews exactly what the current ruleset masks. Changes
-propagate to open chat sessions on tab focus and to the server/worker within
-~30s, and are audit-logged. If the overlay can't be loaded for any reason, the
-**full hardcoded baseline runs** — sanitization is never silently dropped.
+| Rule | Masks | Example |
+|---|---|---|
+| `iccid` | SIM serial numbers (`89…`, 18–20 digits) | `iccid: 8996601234567890123` → `iccid: ICCID_001` |
+| `imei` | Device IMEI (when labelled `IMEI`) | `IMEI: 356938035643809` → `IMEI: IMEI_001` |
+| `imsi` | Subscriber IMSI (any 14–15-digit number) | `IMSI 420011234567890` → `IMSI IMSI_001` |
+| `msisdn` | Subscriber MSISDN (any 10–15-digit number) | `msisdn=966501234567` → `msisdn=MSISDN_001` |
+| `subscriber-id` | SUPI / SUCI / 5G-GUTI / GUTI / P-TMSI / M-TMSI / TMSI (when labelled) | `5G-GUTI: 42001-0a1b-…` → `5G-GUTI: SUBID_001` |
+| `network-id` | PLMN / TAC / LAC / RAC / eNB / gNB / APN (when labelled) | `PLMN: 42001 TAC: 0x1A2B APN=internet.operator` → `PLMN: NETID_001 TAC: NETID_002 APN=NETID_003` |
+| `cellid` | Cell IDs: `cell-id` / CGI / ECI / NCI (when labelled) | `cell-id: 1A2B3C` → `cell-id: CELL_001` |
+| `ipv4` | **Public** IPv4 addresses (private ranges kept, see below) | `peer 203.0.113.7 via 10.20.0.1` → `peer IP_001 via 10.20.0.1` |
+| `ipv6` | IPv6 addresses (not reliably masked today, see [Known limitations](#known-limitations)) | |
+| `mac` | MAC addresses in `aa-bb-cc-dd-ee-ff` form | `00-1a-2b-3c-4d-5e` → `MAC_001` |
+| `hostname` | FQDNs ending in `.com .net .org .io .co .local .internal .corp .lan .private .gov .edu .info .telco .telecom` | `core-sw01.dc1.operator.com` → `HOST_001` |
 
-> The two passes are intentional and complementary: the client pass gives instant
-> in-browser feedback and the editable preview; the server pass is authoritative
-> and re-applies the same rules to everything that touches the model — including
-> KB chunks at ingestion — because the server must never trust the client.
+**How aliases behave:**
+
+- **Consistent within a message.** The same value gets the same alias, and
+  different values get different numbers:
+  `IMSI 420011234567890 … IMSI 420011234567890 … 420019999999999` →
+  `IMSI_001 … IMSI_001 … IMSI_002`.
+- **Numbered per message.** Numbering restarts with each message, so
+  `IMSI_001` in two different messages may be two different subscribers. To
+  correlate across messages, send the related output together.
+- **Not reversible.** Nothing stores the alias-to-value mapping, so neither
+  the AI provider nor DeepConsol can map an alias back to the real value.
+- **Private addresses are kept on purpose.** `10/8`, `172.16/12`,
+  `192.168/16`, `127/8`, `169.254/16`, `0/8` and `255/8` stay readable, so the
+  AI can follow your internal topology. If your internal addressing is
+  sensitive, add custom rules for those prefixes (see below).
+- **Order matters.** Custom redactions run first, then built-in redactions, then
+  built-in aliases, then custom aliases. A value already replaced by an earlier
+  rule isn't matched again.
+
+### Tuning the filters (Admin → Filters)
+
+The built-in rules are a **locked baseline**. Admins can switch any rule **on or
+off**, but its pattern can't be edited, so a typo can never weaken the core
+protection. On top of the baseline, admins add **custom rules**:
+
+| Field | Options |
+|---|---|
+| Label | Name shown in the admin UI; also used in the redaction tag (`[REDACTED:<LABEL>]`) |
+| Match type | **Literal** text, or **wildcard**: `*` = any run of non-space characters, `?` = exactly one character. No raw regex, so no risk of catastrophic regex backtracking (ReDoS). |
+| Action | **Redact**, or **Pseudonymize** with your own alias prefix |
+| Case-insensitive | On by default |
+| Enabled | Switch a rule off without deleting it |
+
+A **Test filters** box shows exactly what the current settings would mask in a
+sample you paste, before you rely on them.
+
+**Examples** (actual output):
+
+| Need | Custom rule | Result |
+|---|---|---|
+| Alias **national MSISDNs** with your own prefix (and disable the generic `msisdn` rule) | Wildcard `9665????????` → Pseudonymize, prefix `SUB` | `drop for 966501234567` → `drop for SUB_001` |
+| Hide a **customer name** | Literal `Acme Telecom` → Redact, label `Customer` | `acme telecom reports…` → `[REDACTED:CUSTOMER] reports…` |
+| Alias **site codes** | Wildcard `RYD-SITE-*` → Pseudonymize, prefix `SITE` | `RYD-SITE-0042 … RYD-SITE-0042` → `SITE_001 … SITE_001` |
+| Keep **hostnames** readable (lower-risk environments) | Disable built-in `hostname` | `core-sw01.dc1.operator.com` stays as is |
+| Mask **internal IP ranges** too | Wildcard `10.20.*` → Pseudonymize, prefix `MGMT_IP` | `10.20.0.1 … 10.20.3.9 … 10.20.0.1` → `MGMT_IP_001 … MGMT_IP_002 … MGMT_IP_001` |
+| Cisco **plaintext / type 8 / type 9** secrets | Wildcards `password 0 *`, `secret 8 *`, `secret 9 *` → Redact | `password 0 Sup3r!` → `[REDACTED:…]` |
+| **TACACS+ / RADIUS keys** | Wildcards `tacacs-server key * *` (with a type digit) and `radius-server key *` → Redact | `tacacs-server key 7 0822455D0A16` → `[REDACTED:…]` |
+
+`*` matches **one word** (no spaces). For `key 7 <secret>`, use one `*` per
+word (`key * *`), or the secret after the type digit stays visible. Always
+check new rules in **Test filters**.
+
+**How changes take effect:**
+
+- **API:** immediately.
+- **Ingestion worker:** within 30 seconds.
+- **Browsers:** the next time the workspace tab regains focus, and always right
+  before a Send to Chat or Copy Sanitized.
+- Every change is audit-logged (`sanitizer_config.*`).
+- Re-index existing documents if you want new rules applied to them.
+
+**It fails closed.** If the custom settings can't be loaded (database error,
+network failure, page still loading), the **full built-in baseline** runs. A
+failure can only make sanitization stricter, never weaker.
+
+### Command risk classification
+
+When you copy an AI-suggested command block, the **Review & Copy** dialog
+classifies every line ([packages/shared/src/risk.ts](packages/shared/src/risk.ts)).
+The block's level is its **riskiest line**:
+
+| Level | Examples of what triggers it | To copy |
+|---|---|---|
+| **critical** | `write erase`, `format flash:`, `mkfs`, `dd if=`, `rm -rf /`, `halt` / `shutdown` / `poweroff`, `reload in/at`, `factory reset`, `drop database/table`, `truncate table` | Type `I UNDERSTAND` |
+| **high** | `commit`, `shutdown` / `no shutdown`, `clear counters/arp/ip/…`, `reset`, `delete`, `remove`, `erase`, `copy running-config startup-config`, `reboot`, `restart`, `configure` / `conf t`, `set system …`, `sudo`, `systemctl stop/disable`, `kill -9`, `iptables -F` | Type `I UNDERSTAND` |
+| **medium** | `debug`, `test`, `monitor`, `capture`, `tcpdump`, `ping -f`, `snmpset`, **and anything not recognised** | Confirm |
+| **low** | `show`, `display`, `get`, `list`, `ping`, `traceroute`, `nslookup`, `dig`, `netstat`, `cat`, `tail`, `grep` | Confirm |
+
+The server re-checks the level and requires the exact phrase for high and
+critical blocks. The audit log records the level, the confirmation method and a
+SHA-256 **hash** of the block, never the command text itself. Unrecognised
+commands default to *medium*, never *low*.
+
+### Access control
+
+- **Roles:** `engineer` (workspace, terminal, chat, own credentials) and `admin`
+  (everything, plus the admin console). The API checks roles on every admin
+  endpoint, not just in the UI.
+- **Knowledge-base visibility:** each document is `global` (everyone), `group`
+  (members of the assigned groups) or `private` (the uploader). The check is
+  inside the retrieval SQL, so a chunk a user may not see is never read, sent to
+  the AI or cited.
+- **Ownership:** saved SSH credentials, terminal sessions and chat threads are
+  queried by owner, so users can't open each other's.
+- **Teams:** six default groups are created at install (Network, Core, RAN,
+  Transport, NOC, Vendor Support) and can be extended in **Admin → Groups**.
+
+### Secrets and sessions
+
+- **Vault:** SSH passwords and keys and the chat and embedding provider API keys
+  are encrypted with **AES-256-GCM**, with a fresh IV and an authentication tag per
+  value. The key (`SSH_CRED_ENCRYPTION_KEY`) exists only in `.env`, so a database
+  dump alone reveals nothing. Stored secrets are never sent back to the browser.
+- **Passwords:** bcrypt with cost 12. Minimum length 10 for new passwords.
+- **Sessions:** signed JWT (HS256) in an `HttpOnly`, `Secure`, `SameSite=Lax`
+  cookie, valid for `JWT_TTL_HOURS` (default 12).
+- **Quick-connect credentials** (typed in without saving) are encrypted and held
+  in Redis for at most 60 seconds, then deleted when the session starts.
 
 ---
 
@@ -703,23 +847,15 @@ until you explicitly insert it and send.
 - **Limits** — per-user session cap (`TERMINAL_MAX_SESSIONS_PER_USER`), idle
   timeout, configurable scrollback. Orphaned session rows are swept on API
   startup so the cap can't be exhausted by crashes.
-- **Right-click menu** on a selection: **Send to Chat (sanitized)** ·
-  **Pin to Drawer** · **Copy Sanitized** · **Copy Raw**.
+- **Right-click menu** on a selection: **Send to Chat (sanitized preview)** ·
+  **Pin to Drawer** · **Copy Sanitized**. (Normal text selection copy in the
+  terminal still copies raw output for your own use.)
 - **No automatic path** from terminal to AI — only the explicit, previewed
   actions above.
-- **Review & Copy** — copying AI-suggested command output to the OS clipboard is
-  gated by a modal that auto-classifies risk via
-  [packages/shared/src/risk.ts](packages/shared/src/risk.ts):
-
-  | Level | Examples | Gate |
-  |---|---|---|
-  | critical | `write erase`, `mkfs`, `dd if=`, `rm -rf /`, `reload in`, `drop database` | type `I UNDERSTAND` |
-  | high | `commit`, `no shutdown`, `clear counters`, `reboot`, `sudo`, `iptables -F` | type `I UNDERSTAND` |
-  | medium | `debug`, `tcpdump`, `snmpset` | confirm |
-  | low | `show`, `display`, `ping`, `cat`, `grep` | confirm |
-
-  A pasted block is graded by its **worst** line; the server re-classifies and
-  records a hash of the content (never the raw text) on confirmation.
+- **Review & Copy.** Copying AI-suggested commands to the clipboard goes
+  through a risk-classified confirmation; high and critical blocks require
+  typing `I UNDERSTAND`. See
+  [Command risk classification](#command-risk-classification) for the full rules.
 
 ---
 
@@ -865,6 +1001,8 @@ sudo certbot --nginx -d your.domain
 
 ## Security model summary
 
+(Full detail: [Security & privacy features](#security--privacy-features).)
+
 - **Defense-in-depth sanitization** — client + server passes, applied to user
   input *and* KB chunks, fail-safe to the full baseline, admin-tunable.
 - **Group-isolated retrieval** — enforced in SQL via the `allowed` CTE, not the
@@ -913,9 +1051,13 @@ Security hardening still to do (MVP):
 - **No login rate limiting or lockout.**
 - **Sanitizer coverage gaps.** These are not yet masked: Cisco `password 0`,
   `secret 8/9`, TACACS/RADIUS/ISAKMP keys, SNMPv3 `auth`/`priv` passphrases, and
-  Juniper `$9$` secrets. Long plain numbers (e.g. interface counters, timestamps)
-  can be over-masked as `MSISDN_nnn`. Add custom rules in **Admin → Filters** for
-  anything specific to your network.
+  Juniper `$9$` secrets (see the custom-rule examples in
+  [Tuning the filters](#tuning-the-filters-admin--filters)). **IPv6 addresses
+  are not reliably masked**, and colon-separated MAC addresses (`00:1a:2b:…`)
+  come out partly visible and garbled. Both are caused by a bug in the IPv6 rule.
+  Dotted Cisco MACs (`001a.2b3c.4d5e`) aren't matched. Long plain numbers
+  (interface counters, timestamps) can be over-masked as `MSISDN_nnn` /
+  `IMSI_nnn`.
 - **Bastion / jump-host fields** on saved credentials are stored but not yet used
   for connections.
 
