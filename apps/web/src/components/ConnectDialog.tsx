@@ -33,6 +33,16 @@ interface Props {
   onClose: () => void;
 }
 
+/** Turn an API error into a message for the dialog (shows policy blocks). */
+function sessionError(err: unknown, fallback: string): string {
+  const body = (err as { body?: { error?: string; reason?: string } } | null)?.body;
+  if (body?.error === "target_not_allowed") {
+    return `Connection to this host is not allowed: it is ${body.reason ?? "blocked by policy"}.`;
+  }
+  if (body?.error === "too_many_active_sessions") return "Too many open sessions — close one and retry.";
+  return fallback;
+}
+
 export default function ConnectDialog({ onConnect, onClose }: Props) {
   const [creds, setCreds] = useState<SshCredential[]>([]);
   const [chosenId, setChosenId] = useState<string>("");
@@ -79,8 +89,8 @@ export default function ConnectDialog({ onConnect, onClose }: Props) {
     try {
       const session = await api.post<{ id: string; target: string }>("/terminal/sessions", { credential_id: chosenId });
       onConnect({ id: session.id, target: session.target });
-    } catch {
-      setError("Failed to start session");
+    } catch (err) {
+      setError(sessionError(err, "Failed to start session"));
     } finally {
       setBusy(false);
     }
@@ -94,8 +104,8 @@ export default function ConnectDialog({ onConnect, onClose }: Props) {
         ad_hoc: { protocol, host, port, username, auth_type: effectiveAuthType, secret },
       });
       onConnect({ id: session.id, target: session.target });
-    } catch {
-      setError("Failed to start session");
+    } catch (err) {
+      setError(sessionError(err, "Failed to start session"));
     } finally {
       setBusy(false);
     }
@@ -110,8 +120,8 @@ export default function ConnectDialog({ onConnect, onClose }: Props) {
       });
       const session = await api.post<{ id: string; target: string }>("/terminal/sessions", { credential_id: created.id });
       onConnect({ id: session.id, target: session.target });
-    } catch {
-      setError("Failed to save / start session");
+    } catch (err) {
+      setError(sessionError(err, "Failed to save / start session"));
     } finally {
       setBusy(false);
     }

@@ -4,6 +4,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { query } from "../db/pool.js";
 import { audit } from "../services/audit.js";
 import { config } from "../config.js";
+import { checkTerminalTarget } from "../services/terminal-target.js";
 
 const AdHoc = z
   .object({
@@ -64,6 +65,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
       return;
     }
     let target = "ad-hoc";
+    let targetHost = "";
     if (body.credential_id) {
       const { rows: c } = await query<{ protocol: string; host: string; port: number; username: string }>(
         "SELECT protocol, host, port, username FROM ssh_credentials WHERE id = $1 AND user_id = $2",
@@ -73,10 +75,26 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
         reply.code(404).send({ error: "credential_not_found" });
         return;
       }
+      targetHost = c[0].host;
       target = `${c[0].protocol}://${c[0].username || "?"}@${c[0].host}:${c[0].port}`;
     } else if (body.ad_hoc) {
       const userPart = body.ad_hoc.username || "?";
+      targetHost = body.ad_hoc.host;
       target = `${body.ad_hoc.protocol}://${userPart}@${body.ad_hoc.host}:${body.ad_hoc.port}`;
+    }
+
+    // Early check for a clear error in the connect dialog. The gateway checks
+    // again (authoritatively) right before it connects.
+    const decision = await checkTerminalTarget(targetHost);
+    if (!decision.ok) {
+      await audit(req.user!.sub, "terminal.target_blocked", {
+        target,
+        resolved_ip: decision.ip ?? null,
+        reason: decision.reason,
+        stage: "session_create",
+      });
+      reply.code(403).send({ error: "target_not_allowed", reason: decision.reason });
+      return;
     }
     const { rows } = await query<{ id: string }>(
       `INSERT INTO terminal_sessions (user_id, credential_id, target, metadata_json)

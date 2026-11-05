@@ -22,7 +22,7 @@
     "start:api": "npm run start -w @deepconsol/api",
     "start:worker": "npm run start -w @deepconsol/worker",
     "start:web": "npm run start -w @deepconsol/web",
-    "test": "npm test -w @deepconsol/shared"
+    "test": "npm test -w @deepconsol/shared -w @deepconsol/api"
   },
   "engines": {
     "node": ">=20.0.0"

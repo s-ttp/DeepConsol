@@ -65,6 +65,10 @@ export const config = {
   terminalIdleTimeoutSec: num("TERMINAL_IDLE_TIMEOUT_SEC", 1800),
   terminalMaxSessionsPerUser: num("TERMINAL_MAX_SESSIONS_PER_USER", 8),
   terminalDefaultScrollback: num("TERMINAL_DEFAULT_SCROLLBACK", 10000),
+  // Terminal target policy (see services/target-policy.ts). Comma-separated
+  // CIDRs or single IPs. Empty allow-list = any target not denied.
+  terminalAllowedCidrs: optional("TERMINAL_ALLOWED_CIDRS", "").split(",").map((s) => s.trim()).filter(Boolean),
+  terminalDeniedCidrs: optional("TERMINAL_DENIED_CIDRS", "").split(",").map((s) => s.trim()).filter(Boolean),
 
   chatHistoryRetentionDays: num("CHAT_HISTORY_RETENTION_DAYS", 90),
   chatMaxConcurrentPerUser: num("CHAT_MAX_CONCURRENT_PER_USER", 4),

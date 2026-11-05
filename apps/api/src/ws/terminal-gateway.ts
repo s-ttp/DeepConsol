@@ -10,6 +10,7 @@ import { config } from "../config.js";
 import { logger } from "../logger.js";
 import { redisConnection } from "../services/queue.js";
 import { TelnetSession } from "./telnet.js";
+import { checkTerminalTarget } from "../services/terminal-target.js";
 
 /**
  * Terminal gateway: bridges xterm.js (browser WSS) to ssh2 (real SSH PTY).
@@ -173,7 +174,16 @@ export async function registerTerminalGateway(app: FastifyInstance): Promise<voi
       return;
     }
 
-    const info = await loadConnectInfo(claims.sub, sessionId, session.credential_id);
+    let info: ConnectInfo | null;
+    try {
+      info = await loadConnectInfo(claims.sub, sessionId, session.credential_id);
+    } catch (err) {
+      // e.g. a stored secret that no longer decrypts (key changed / corrupt
+      // row). Previously this rejected the handler and dropped the socket
+      // without any message.
+      logger.error({ err: (err as Error).message, sessionId }, "failed to load terminal credentials");
+      info = null;
+    }
     if (!info) {
       sendJson({ type: "error", message: "credentials_not_available" });
       socket.close(4404, "credentials_not_available");
@@ -182,6 +192,26 @@ export async function registerTerminalGateway(app: FastifyInstance): Promise<voi
       await endSession(sessionId, claims.sub, "credentials_not_available");
       return;
     }
+
+    // Authoritative target check, right before connecting. Connect to the
+    // checked IP — not the hostname — so DNS can't change the destination
+    // between the check and the connection.
+    const decision = await checkTerminalTarget(info.host);
+    if (!decision.ok) {
+      logger.warn({ sessionId, host: info.host, ip: decision.ip, reason: decision.reason }, "terminal target blocked");
+      await audit(claims.sub, "terminal.target_blocked", {
+        session_id: sessionId,
+        host: info.host,
+        resolved_ip: decision.ip ?? null,
+        reason: decision.reason,
+        stage: "gateway_connect",
+      });
+      sendJson({ type: "error", message: `target_not_allowed: ${info.host} is ${decision.reason}` });
+      socket.close(4403, "target_not_allowed");
+      await endSession(sessionId, claims.sub, "target_not_allowed");
+      return;
+    }
+    info.host = decision.ip;
 
     const cols = session.metadata_json.cols ?? 120;
     const termRows = session.metadata_json.rows ?? 32;

@@ -4,6 +4,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { query } from "../db/pool.js";
 import { encrypt } from "../services/crypto.js";
 import { audit } from "../services/audit.js";
+import { checkTerminalTarget } from "../services/terminal-target.js";
 
 const Create = z
   .object({
@@ -51,6 +52,19 @@ export async function sshCredentialRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/ssh-credentials", { preHandler: requireAuth }, async (req, reply) => {
     const body = Create.parse(req.body);
+    // Refuse to save a credential for a host the terminal policy blocks (the
+    // gateway re-checks at connect time, so this is for a clear early error).
+    const decision = await checkTerminalTarget(body.host);
+    if (!decision.ok) {
+      await audit(req.user!.sub, "terminal.target_blocked", {
+        host: body.host,
+        resolved_ip: decision.ip ?? null,
+        reason: decision.reason,
+        stage: "credential_save",
+      });
+      reply.code(403).send({ error: "target_not_allowed", reason: decision.reason });
+      return;
+    }
     // Encrypt even an empty secret so the column stays NOT NULL and the
     // envelope (iv + auth_tag + ciphertext) is uniformly shaped.
     const enc = encrypt(body.secret);
